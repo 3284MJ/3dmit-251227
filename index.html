@@ -2,9 +2,10 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>3D Viewer - Mitsuhashi Navigation</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>3D Viewer - Mitsuhashi Mobile Ready</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #f0f0f0; }
+        body { margin: 0; overflow: hidden; background-color: #f0f0f0; touch-action: none; }
         canvas { display: block; width: 100vw; height: 100vh; }
         #debug-log {
             position: absolute; top: 10px; left: 10px;
@@ -15,7 +16,7 @@
     </style>
 </head>
 <body>
-    <div id="debug-log">Status: Ready.</div>
+    <div id="debug-log">Status: Initializing...</div>
 
     <script type="importmap">
         {
@@ -40,7 +41,7 @@
 
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // スマホの負荷軽減
         document.body.appendChild(renderer.domElement);
 
         scene.add(new THREE.AmbientLight(0xffffff, 2.0));
@@ -58,6 +59,9 @@
         let targetPosition = null;
         let isProcessing = false;
         let isMoving = false;
+
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
 
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
@@ -87,7 +91,7 @@
             const group = new THREE.Group();
             const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1), new THREE.MeshStandardMaterial({ color: 0x888888 }));
             pole.position.y = 0.5;
-            const cloth = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.02), new THREE.MeshStandardMaterial({ color: 0xff0000 }));
+            const cloth = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.02), new THREE.MeshStandardMaterial({ color: 0xff4757 }));
             cloth.position.set(0.2, 0.8, 0);
             group.add(pole, cloth);
             group.visible = false;
@@ -103,12 +107,34 @@
             gltf.animations.forEach((clip, index) => {
                 actions[clip.name || `Motion ${index}`] = mixer.clipAction(clip);
             });
+            debugLog("Ready! Tap ground to move.");
         });
 
-        window.addEventListener('mousedown', (event) => {
+        // 最短回転角度計算
+        function getShortestAngle(targetAngle) {
+            let diff = targetAngle - model.rotation.y;
+            while (diff > Math.PI) diff -= Math.PI * 2;
+            while (diff < -Math.PI) diff += Math.PI * 2;
+            return diff;
+        }
+
+        // スマホ・PC共通のクリック/タップハンドラ
+        function handleInput(event) {
             if (!model || isProcessing || isMoving) return;
-            const mouse = new THREE.Vector2((event.clientX / window.innerWidth) * 2 - 1, -(event.clientY / window.innerHeight) * 2 + 1);
-            const raycaster = new THREE.Raycaster();
+
+            let clientX, clientY;
+            if (event.touches) {
+                clientX = event.touches[0].clientX;
+                clientY = event.touches[0].clientY;
+            } else {
+                clientX = event.clientX;
+                clientY = event.clientY;
+            }
+
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+
             raycaster.setFromCamera(mouse, camera);
             const intersects = raycaster.intersectObject(ground);
             if (intersects.length > 0) {
@@ -117,89 +143,84 @@
                 flag.visible = true;
                 processNavigation();
             }
-        });
+        }
 
-        // 最短回転角度を計算するヘルパー
-        function getShortestAngle(targetAngle) {
-            let diff = targetAngle - model.rotation.y;
-            while (diff > Math.PI) diff -= Math.PI * 2;
-            while (diff < -Math.PI) diff += Math.PI * 2;
-            return diff;
+        window.addEventListener('mousedown', handleInput);
+        window.addEventListener('touchstart', handleInput, { passive: false });
+
+        async function turnTowards(targetVec, isFinal = false) {
+            const jumpAction = actions['垂直ジャンプ'] || Object.values(actions)[1];
+            const runAction = actions['走行'] || Object.values(actions)[0];
+
+            if (isFinal) {
+                // 足踏み回転（走行モーション維持）
+                await fadeTo(runAction, 0.2);
+                while (true) {
+                    const toTarget = new THREE.Vector3().subVectors(targetVec, model.position);
+                    const diff = getShortestAngle(Math.atan2(toTarget.x, toTarget.z));
+                    if (Math.abs(diff) < 0.05) break;
+                    model.rotation.y += Math.sign(diff) * Math.min(Math.abs(diff), 0.06);
+                    await new Promise(r => requestAnimationFrame(r));
+                }
+            } else {
+                // ジャンプ回転
+                while (true) {
+                    const toTarget = new THREE.Vector3().subVectors(targetVec, model.position);
+                    const diff = getShortestAngle(Math.atan2(toTarget.x, toTarget.z));
+                    if (Math.abs(diff) < 0.1) break;
+
+                    const step = Math.sign(diff) * Math.min(Math.abs(diff), THREE.MathUtils.degToRad(60));
+                    await fadeTo(jumpAction, 0.1);
+                    
+                    const startRot = model.rotation.y;
+                    const startTime = performance.now();
+                    await new Promise(res => {
+                        function r() {
+                            const p = Math.min((performance.now() - startTime) / 800, 1);
+                            model.rotation.y = startRot + step * p;
+                            if (p < 1) requestAnimationFrame(r); else res();
+                        }
+                        r();
+                    });
+                    await new Promise(r => setTimeout(r, 100));
+                }
+            }
         }
 
         async function processNavigation() {
             isProcessing = true;
-            const jumpAction = actions['垂直ジャンプ'] || Object.values(actions)[1];
-            const runAction = actions['走行'] || Object.values(actions)[0];
-
-            // --- 1. ジャンプによる方向転換 ---
-            debugLog("Step 1: Jumping to turn...");
-            while (true) {
-                const toTarget = new THREE.Vector3().subVectors(targetPosition, model.position);
-                const diff = getShortestAngle(Math.atan2(toTarget.x, toTarget.z));
-                if (Math.abs(diff) < THREE.MathUtils.degToRad(5)) break;
-
-                const step = Math.sign(diff) * Math.min(Math.abs(diff), THREE.MathUtils.degToRad(60));
-                await fadeTo(jumpAction, 0.1);
-                
-                const startRot = model.rotation.y;
-                const startTime = performance.now();
-                await new Promise(res => {
-                    function r() {
-                        const p = Math.min((performance.now() - startTime) / 800, 1);
-                        model.rotation.y = startRot + step * p;
-                        if (p < 1) requestAnimationFrame(r); else res();
-                    }
-                    r();
-                });
-                await new Promise(r => setTimeout(r, 100));
-            }
-
-            // --- 2. 0.2秒の停止 (タメ) ---
+            
+            // 1. 方向転換ジャンプ
+            await turnTowards(targetPosition, false);
+            
+            // 2. 0.2秒停止
             if (activeAction) activeAction.fadeOut(0.2);
             activeAction = null;
             await new Promise(r => setTimeout(r, 200));
 
-            // --- 3. 走行による移動 ---
-            debugLog("Step 2: Moving...");
+            // 3. 走行移動
+            const runAction = actions['走行'] || Object.values(actions)[0];
             await fadeTo(runAction, 0.3);
             isMoving = true;
             
-            // 到着待ち
             await new Promise(resolve => {
                 const check = setInterval(() => {
                     const dist = model.position.distanceTo(new THREE.Vector3(targetPosition.x, model.position.y, targetPosition.z));
-                    if (dist <= 0.1) {
-                        clearInterval(check);
-                        resolve();
-                    }
+                    if (dist <= 0.15) { clearInterval(check); resolve(); }
                 }, 100);
             });
             isMoving = false;
             flag.visible = false;
 
-            // --- 4. 走行（足踏み）による方向転換（カメラ向き） ---
-            debugLog("Step 3: Stepping to face camera...");
-            // 移動が終わっても runAction（走行）を維持したまま回転
-            while (true) {
-                const camPos = new THREE.Vector3();
-                camera.getWorldPosition(camPos);
-                const diff = getShortestAngle(Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z));
-                
-                // 向きが合ったらループ終了
-                if (Math.abs(diff) < THREE.MathUtils.degToRad(5)) break;
+            // 4. カメラ方向へ足踏み回転
+            const camPos = new THREE.Vector3();
+            camera.getWorldPosition(camPos);
+            await turnTowards(camPos, true);
 
-                // 走行アニメーションと同じくらいの速さで回転させる（ここでは1フレームあたり一定角）
-                const turnSpeed = 0.05; 
-                model.rotation.y += Math.sign(diff) * Math.min(Math.abs(diff), turnSpeed);
-                await new Promise(r => requestAnimationFrame(r));
-            }
-
-            // すべて終了
             if (activeAction) activeAction.fadeOut(0.5);
             activeAction = null;
             isProcessing = false;
-            debugLog("Goal reached and facing camera.");
+            debugLog("Goal!");
         }
 
         async function fadeTo(nextAction, duration) {
@@ -228,6 +249,12 @@
             renderer.render(scene, camera);
         }
         animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
     </script>
 </body>
 </html>
