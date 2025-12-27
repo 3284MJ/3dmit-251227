@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>3D Viewer - Mitsuhashi Mobile Ready</title>
+    <title>3D Viewer - Mitsuhashi DX Move</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #f0f0f0; touch-action: none; }
         canvas { display: block; width: 100vw; height: 100vh; }
@@ -16,7 +16,7 @@
     </style>
 </head>
 <body>
-    <div id="debug-log">Status: Initializing...</div>
+    <div id="debug-log">Status: Tap once to walk, Double tap to BOOST!</div>
 
     <script type="importmap">
         {
@@ -41,7 +41,7 @@
 
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // スマホの負荷軽減
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         document.body.appendChild(renderer.domElement);
 
         scene.add(new THREE.AmbientLight(0xffffff, 2.0));
@@ -59,10 +59,15 @@
         let targetPosition = null;
         let isProcessing = false;
         let isMoving = false;
+        
+        // 追加変数
+        let lastTapTime = 0;
+        let moveSpeed = 0.06;
+        let isBoost = false;
+        const particles = []; // 煙パーティクル用
 
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
-
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
 
@@ -100,36 +105,36 @@
         }
         flag = createFlag();
 
+        // 煙パーティクルの作成関数
+        function createSmoke(pos) {
+            const size = Math.random() * 0.2 + 0.1;
+            const geo = new THREE.SphereGeometry(size, 8, 8);
+            const mat = new THREE.MeshBasicMaterial({ color: 0xcccccc, transparent: true, opacity: 0.6 });
+            const p = new THREE.Mesh(geo, mat);
+            p.position.set(pos.x + (Math.random()-0.5)*0.3, 0.1, pos.z + (Math.random()-0.5)*0.3);
+            scene.add(p);
+            particles.push({ mesh: p, life: 1.0, velocity: new THREE.Vector3(0, 0.02, 0) });
+        }
+
         new GLTFLoader().load('./model.glb', (gltf) => {
             model = gltf.scene;
             scene.add(model);
             mixer = new THREE.AnimationMixer(model);
-            gltf.animations.forEach((clip, index) => {
-                actions[clip.name || `Motion ${index}`] = mixer.clipAction(clip);
+            gltf.animations.forEach((clip) => {
+                actions[clip.name || `Motion`] = mixer.clipAction(clip);
             });
-            debugLog("Ready! Tap ground to move.");
+            debugLog("Ready! Tap ground.");
         });
 
-        // 最短回転角度計算
-        function getShortestAngle(targetAngle) {
-            let diff = targetAngle - model.rotation.y;
-            while (diff > Math.PI) diff -= Math.PI * 2;
-            while (diff < -Math.PI) diff += Math.PI * 2;
-            return diff;
-        }
-
-        // スマホ・PC共通のクリック/タップハンドラ
         function handleInput(event) {
             if (!model || isProcessing || isMoving) return;
 
-            let clientX, clientY;
-            if (event.touches) {
-                clientX = event.touches[0].clientX;
-                clientY = event.touches[0].clientY;
-            } else {
-                clientX = event.clientX;
-                clientY = event.clientY;
-            }
+            const now = Date.now();
+            isBoost = (now - lastTapTime < 300); // ダブルタップ判定
+            lastTapTime = now;
+
+            let clientX = event.touches ? event.touches[0].clientX : event.clientX;
+            let clientY = event.touches ? event.touches[0].clientY : event.clientY;
 
             const rect = renderer.domElement.getBoundingClientRect();
             mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
@@ -138,8 +143,10 @@
             raycaster.setFromCamera(mouse, camera);
             const intersects = raycaster.intersectObject(ground);
             if (intersects.length > 0) {
-                targetPosition = intersects[0].point;
+                targetPosition = intersects[0].point.clone();
                 flag.position.copy(targetPosition);
+                // ブーストなら旗を黄色に
+                flag.children[1].material.color.set(isBoost ? 0xffd700 : 0xff4757);
                 flag.visible = true;
                 processNavigation();
             }
@@ -148,79 +155,100 @@
         window.addEventListener('mousedown', handleInput);
         window.addEventListener('touchstart', handleInput, { passive: false });
 
-        async function turnTowards(targetVec, isFinal = false) {
-            const jumpAction = actions['垂直ジャンプ'] || Object.values(actions)[1];
-            const runAction = actions['走行'] || Object.values(actions)[0];
-
-            if (isFinal) {
-                // 足踏み回転（走行モーション維持）
-                await fadeTo(runAction, 0.2);
-                while (true) {
-                    const toTarget = new THREE.Vector3().subVectors(targetVec, model.position);
-                    const diff = getShortestAngle(Math.atan2(toTarget.x, toTarget.z));
-                    if (Math.abs(diff) < 0.05) break;
-                    model.rotation.y += Math.sign(diff) * Math.min(Math.abs(diff), 0.06);
-                    await new Promise(r => requestAnimationFrame(r));
-                }
-            } else {
-                // ジャンプ回転
-                while (true) {
-                    const toTarget = new THREE.Vector3().subVectors(targetVec, model.position);
-                    const diff = getShortestAngle(Math.atan2(toTarget.x, toTarget.z));
-                    if (Math.abs(diff) < 0.1) break;
-
-                    const step = Math.sign(diff) * Math.min(Math.abs(diff), THREE.MathUtils.degToRad(60));
-                    await fadeTo(jumpAction, 0.1);
-                    
-                    const startRot = model.rotation.y;
-                    const startTime = performance.now();
-                    await new Promise(res => {
-                        function r() {
-                            const p = Math.min((performance.now() - startTime) / 800, 1);
-                            model.rotation.y = startRot + step * p;
-                            if (p < 1) requestAnimationFrame(r); else res();
-                        }
-                        r();
-                    });
-                    await new Promise(r => setTimeout(r, 100));
-                }
-            }
-        }
-
         async function processNavigation() {
             isProcessing = true;
-            
+            moveSpeed = isBoost ? 0.12 : 0.06; // スピード1.5〜2倍
+
             // 1. 方向転換ジャンプ
-            await turnTowards(targetPosition, false);
+            const toTarget = new THREE.Vector3().subVectors(targetPosition, model.position);
+            const targetAngle = Math.atan2(toTarget.x, toTarget.z);
+            await turnTowards(targetAngle, false);
             
-            // 2. 0.2秒停止
-            if (activeAction) activeAction.fadeOut(0.2);
-            activeAction = null;
             await new Promise(r => setTimeout(r, 200));
 
-            // 3. 走行移動
+            // 2. 走行
+            debugLog(isBoost ? "BOOSTING!!" : "Moving...");
             const runAction = actions['走行'] || Object.values(actions)[0];
-            await fadeTo(runAction, 0.3);
+            await fadeTo(runAction, 0.2);
             isMoving = true;
             
+            // 移動メインループ
             await new Promise(resolve => {
                 const check = setInterval(() => {
                     const dist = model.position.distanceTo(new THREE.Vector3(targetPosition.x, model.position.y, targetPosition.z));
-                    if (dist <= 0.15) { clearInterval(check); resolve(); }
-                }, 100);
+                    if (dist <= (isBoost ? 0.6 : 0.15)) { // ブースト時は早めにループを抜けてオーバーランさせる
+                        clearInterval(check);
+                        resolve();
+                    }
+                }, 16);
             });
-            isMoving = false;
+
+            if (isBoost) {
+                debugLog("Overrunning...");
+                await new Promise(r => setTimeout(r, 300)); // 0.3秒間行き過ぎる
+                isMoving = false;
+                
+                debugLog("Backing up...");
+                // バック走行で目標へ戻る
+                while (model.position.distanceTo(new THREE.Vector3(targetPosition.x, model.position.y, targetPosition.z)) > 0.1) {
+                    const dir = new THREE.Vector3().subVectors(targetPosition, model.position).normalize();
+                    model.position.add(dir.multiplyScalar(0.03)); // ゆっくり戻る
+                    if (Math.random() > 0.8) createSmoke(model.position);
+                    await new Promise(r => requestAnimationFrame(r));
+                }
+            } else {
+                isMoving = false;
+            }
+
             flag.visible = false;
 
-            // 4. カメラ方向へ足踏み回転
+            // 3. カメラ方向へ足踏み回転
             const camPos = new THREE.Vector3();
             camera.getWorldPosition(camPos);
-            await turnTowards(camPos, true);
+            const finalAngle = Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z);
+            await turnTowards(finalAngle, true);
 
             if (activeAction) activeAction.fadeOut(0.5);
             activeAction = null;
             isProcessing = false;
-            debugLog("Goal!");
+            debugLog("Arrived.");
+        }
+
+        async function turnTowards(targetAngle, isStepping) {
+            const jumpAction = actions['垂直ジャンプ'] || Object.values(actions)[1];
+            const runAction = actions['走行'] || Object.values(actions)[0];
+
+            if (isStepping) {
+                await fadeTo(runAction, 0.2);
+                while (true) {
+                    let diff = targetAngle - model.rotation.y;
+                    while (diff > Math.PI) diff -= Math.PI * 2;
+                    while (diff < -Math.PI) diff += Math.PI * 2;
+                    if (Math.abs(diff) < 0.05) break;
+                    model.rotation.y += Math.sign(diff) * 0.06;
+                    await new Promise(r => requestAnimationFrame(r));
+                }
+            } else {
+                while (true) {
+                    let diff = targetAngle - model.rotation.y;
+                    while (diff > Math.PI) diff -= Math.PI * 2;
+                    while (diff < -Math.PI) diff += Math.PI * 2;
+                    if (Math.abs(diff) < 0.1) break;
+
+                    const step = Math.sign(diff) * Math.min(Math.abs(diff), Math.PI/3);
+                    await fadeTo(jumpAction, 0.1);
+                    const startR = model.rotation.y;
+                    const startTime = performance.now();
+                    await new Promise(res => {
+                        function r() {
+                            const p = Math.min((performance.now() - startTime) / 800, 1);
+                            model.rotation.y = startR + step * p;
+                            if (p < 1) requestAnimationFrame(r); else res();
+                        }
+                        r();
+                    });
+                }
+            }
         }
 
         async function fadeTo(nextAction, duration) {
@@ -232,18 +260,37 @@
 
         function animate() {
             requestAnimationFrame(animate);
-            if (mixer) mixer.update(1/60);
+            const delta = 1/60;
+            if (mixer) mixer.update(delta);
 
+            // 移動と煙の発生
             if (isMoving && model && targetPosition) {
                 const dir = new THREE.Vector3().subVectors(targetPosition, model.position).normalize();
-                model.position.add(dir.setY(0).multiplyScalar(0.06));
+                model.position.add(dir.setY(0).multiplyScalar(moveSpeed));
+                
+                // 走行中に煙を生成
+                if (Math.random() > (isBoost ? 0.3 : 0.7)) {
+                    createSmoke(model.position);
+                }
+            }
+
+            // パーティクルの更新
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.life -= 0.02;
+                p.mesh.position.add(p.velocity);
+                p.mesh.material.opacity = p.life;
+                p.mesh.scale.multiplyScalar(1.02);
+                if (p.life <= 0) {
+                    scene.remove(p.mesh);
+                    particles.splice(i, 1);
+                }
             }
 
             if (model && blobShadow) {
                 blobShadow.position.set(model.position.x, 0.005, model.position.z);
                 blobShadow.material.opacity = Math.max(0, 1.0 - model.position.y * 0.4);
-                const s = Math.max(0.1, 1.0 - model.position.y * 0.3);
-                blobShadow.scale.set(s, s, 1);
+                blobShadow.scale.setScalar(Math.max(0.1, 1.0 - model.position.y * 0.3));
             }
             controls.update();
             renderer.render(scene, camera);
