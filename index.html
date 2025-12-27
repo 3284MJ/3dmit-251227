@@ -1,85 +1,110 @@
-　<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>3D Viewer - Mitsuhashi Update</title>
+    <title>3D Viewer - Mitsuhashi Manual</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #f0f0f0; touch-action: none; font-family: sans-serif; }
         canvas { display: block; width: 100vw; height: 100vh; }
         
-        /* デバッグログ（非表示気味に調整） */
-        #debug-log {
-            position: absolute; top: 10px; left: 10px;
-            background: rgba(0,0,0,0.5); color: white;
-            padding: 5px 10px; font-family: monospace; font-size: 10px;
-            pointer-events: none; z-index: 100; border-radius: 4px; opacity: 0.7;
+        /* UI共通スタイル */
+        .ui-panel {
+            position: absolute; left: 10px;
+            background: rgba(0,0,0,0.6); color: white;
+            padding: 8px 12px; font-family: monospace; font-size: 12px;
+            border-radius: 4px; z-index: 100;
+            backdrop-filter: blur(2px);
         }
 
-        /* --- モーダル（更新通知）のスタイル --- */
+        /* デバッグログ */
+        #debug-log {
+            top: 10px;
+            pointer-events: none; /* 下の操作を邪魔しない */
+        }
+
+        /* 操作説明ボタン */
+        #help-btn {
+            top: 45px; /* ログの下に配置 */
+            cursor: pointer; pointer-events: auto;
+            border: 1px solid rgba(255,255,255,0.3);
+            transition: background 0.2s;
+            display: flex; align-items: center; gap: 5px;
+        }
+        #help-btn:active { background: rgba(0,0,0,0.8); transform: translateY(1px); }
+        #help-btn::before { content: "❓"; font-size: 14px; }
+
+        /* --- モーダル（ヘルプ画面） --- */
         .modal-overlay {
+            display: none; /* 初期状態は非表示 */
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0, 0, 0, 0.6); z-index: 2000;
-            display: flex; justify-content: center; align-items: center;
-            backdrop-filter: blur(2px);
+            justify-content: center; align-items: center;
         }
         .modal-card {
             background: white; width: 85%; max-width: 320px;
-            padding: 25px; border-radius: 20px; text-align: center;
+            padding: 20px; border-radius: 15px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-            transform: scale(0.8); opacity: 0;
-            animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+            animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            display: flex; flex-direction: column; gap: 10px;
         }
         @keyframes popIn {
+            from { transform: scale(0.8); opacity: 0; }
             to { transform: scale(1); opacity: 1; }
         }
-        .modal-title {
-            font-size: 20px; font-weight: bold; color: #ff4757; margin-bottom: 10px;
+        .modal-header {
+            font-size: 18px; font-weight: bold; color: #333;
+            border-bottom: 2px solid #f0f0f0; padding-bottom: 10px; margin-bottom: 5px;
+            display: flex; justify-content: space-between; align-items: center;
         }
-        .modal-body {
-            font-size: 14px; color: #333; line-height: 1.6; margin-bottom: 20px;
+        
+        /* リスト表示用 */
+        .help-list-item {
+            background: #f8f9fa; padding: 12px; border-radius: 8px;
+            cursor: pointer; font-weight: bold; color: #555;
+            display: flex; justify-content: space-between; align-items: center;
+            transition: background 0.2s; border: 1px solid #eee;
         }
-        .hint-box {
-            background: #fff3cd; color: #856404; padding: 10px;
-            border-radius: 10px; margin: 15px 0; font-weight: bold;
-            display: flex; align-items: center; justify-content: center; gap: 10px;
+        .help-list-item:active { background: #e2e6ea; }
+        .help-list-item::after { content: "▶"; color: #ccc; font-size: 10px; }
+
+        /* 詳細表示用 */
+        .detail-view { display: none; text-align: left; }
+        .detail-title { font-size: 16px; font-weight: bold; color: #ff4757; margin-bottom: 10px; }
+        .detail-desc { font-size: 14px; color: #444; line-height: 1.6; min-height: 80px; }
+        .detail-icon { font-size: 30px; text-align: center; margin: 15px 0; display: block; }
+        
+        /* ボタン類 */
+        .btn-group { display: flex; gap: 10px; margin-top: 10px; }
+        .btn {
+            flex: 1; padding: 10px; border: none; border-radius: 8px;
+            font-weight: bold; cursor: pointer;
         }
-        .tap-icon {
-            font-size: 24px; animation: tapAnim 1s infinite;
-        }
-        @keyframes tapAnim {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(0.8); }
-        }
-        .btn-close {
-            background: #ff4757; color: white; border: none;
-            padding: 12px 30px; border-radius: 30px;
-            font-size: 16px; font-weight: bold; cursor: pointer;
-            box-shadow: 0 4px 10px rgba(255, 71, 87, 0.4);
-            transition: transform 0.1s;
-        }
-        .btn-close:active { transform: scale(0.95); }
+        .btn-close { background: #666; color: white; }
+        .btn-back { background: #ddd; color: #333; }
     </style>
 </head>
 <body>
-    <div id="debug-log">Status: Initializing...</div>
+    <div id="debug-log" class="ui-panel">Status: Ready.</div>
+    <div id="help-btn" class="ui-panel" onclick="openHelpMenu()">操作説明</div>
 
-    <div id="update-modal" class="modal-overlay">
+    <div id="help-modal" class="modal-overlay">
         <div class="modal-card">
-            <div class="modal-title">✨ NEW ACTION ✨</div>
-            <div class="modal-body">
-                ミツハシくんの動きが進化しました！<br>
-                急いでいる時はこうしてみてね。
-                
-                <div class="hint-box">
-                    <span class="tap-icon">👆👆</span>
-                    <span>地面をダブルタップ！</span>
-                </div>
-                
-                すごい勢いで走ります。<br>
-                <small>（止まれるかな…？）</small>
+            <div class="modal-header">
+                <span id="modal-title">メニュー</span>
+                <span style="cursor:pointer; font-size:20px;" onclick="closeModal()">×</span>
             </div>
-            <button class="btn-close" onclick="closeModal()">わかった！</button>
+            
+            <div id="menu-list">
+                </div>
+
+            <div id="detail-area" class="detail-view">
+                <div id="detail-content"></div>
+                <div class="btn-group">
+                    <button class="btn btn-back" onclick="showList()">戻る</button>
+                    <button class="btn btn-close" onclick="closeModal()">閉じる</button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -93,15 +118,71 @@
     </script>
     
     <script>
-        // HTML側から呼ぶためのグローバル関数
+        // --- ヘルプデータ定義 ---
+        const helpContent = [
+            {
+                title: "歩いて移動",
+                icon: "👆",
+                desc: "地面を【1回タップ】すると、ミツハシくんがその場所までトコトコ歩いて移動します。"
+            },
+            {
+                title: "ダッシュ移動",
+                icon: "👆👆",
+                desc: "地面を【ダブルタップ（2回連打）】すると、煙を上げて猛ダッシュ！<br>急ぎすぎて止まれないかも…？"
+            }
+        ];
+
+        // --- UI操作ロジック ---
+        window.isModalOpen = false;
+
+        window.openHelpMenu = function() {
+            window.isModalOpen = true;
+            document.getElementById('help-modal').style.display = 'flex';
+            showList(); // リストを表示
+        };
+
         window.closeModal = function() {
-            const modal = document.getElementById('update-modal');
-            modal.style.transition = 'opacity 0.3s';
-            modal.style.opacity = '0';
-            setTimeout(() => {
-                modal.style.display = 'none';
-                window.isModalOpen = false; // 操作ロック解除
-            }, 300);
+            window.isModalOpen = false;
+            document.getElementById('help-modal').style.display = 'none';
+        };
+
+        window.showList = function() {
+            const listEl = document.getElementById('menu-list');
+            const detailEl = document.getElementById('detail-area');
+            const titleEl = document.getElementById('modal-title');
+
+            detailEl.style.display = 'none';
+            listEl.style.display = 'flex';
+            listEl.style.flexDirection = 'column';
+            listEl.style.gap = '8px';
+            titleEl.innerText = '操作説明メニュー';
+
+            // リスト再生成
+            listEl.innerHTML = '';
+            helpContent.forEach((item, index) => {
+                const div = document.createElement('div');
+                div.className = 'help-list-item';
+                div.innerText = item.title;
+                div.onclick = () => showDetail(index);
+                listEl.appendChild(div);
+            });
+        };
+
+        window.showDetail = function(index) {
+            const listEl = document.getElementById('menu-list');
+            const detailEl = document.getElementById('detail-area');
+            const contentEl = document.getElementById('detail-content');
+            const titleEl = document.getElementById('modal-title');
+            const item = helpContent[index];
+
+            listEl.style.display = 'none';
+            detailEl.style.display = 'block';
+            titleEl.innerText = item.title;
+
+            contentEl.innerHTML = `
+                <span class="detail-icon">${item.icon}</span>
+                <div class="detail-desc">${item.desc}</div>
+            `;
         };
     </script>
 
@@ -112,9 +193,6 @@
 
         const logElement = document.getElementById('debug-log');
         function debugLog(msg) { logElement.innerText = "Status: " + msg; }
-
-        // グローバル変数をwindowに紐付け（モジュール外との連携用）
-        window.isModalOpen = true; // 最初はモーダルが開いているので操作ロック
 
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -209,13 +287,17 @@
             gltf.animations.forEach((clip) => {
                 actions[clip.name || `Motion`] = mixer.clipAction(clip);
             });
-            debugLog("Waiting for user...");
+            debugLog("Ready!");
         });
 
         // 入力ハンドラ
         function handleInput(event) {
-            // モーダルが開いている間 or 処理中は操作無効
-            if (window.isModalOpen || !model || isProcessing) return;
+            // モーダルが開いている間は3D空間のタップを無効化
+            if (window.isModalOpen) return;
+            // ボタン等UI上のクリックは無視（イベントバブリング対策はCSSのpointer-events制御で対応済だが念のため）
+            if (event.target.closest('.ui-panel')) return;
+
+            if (!model || isProcessing) return;
 
             let clientX = event.touches ? event.touches[0].clientX : event.clientX;
             let clientY = event.touches ? event.touches[0].clientY : event.clientY;
@@ -272,8 +354,6 @@
             await new Promise(resolve => {
                 const check = setInterval(() => {
                     const currentDist = model.position.distanceTo(new THREE.Vector3(targetPos.x, model.position.y, targetPos.z));
-                    
-                    // ブースト時は0.8m手前で制御を離す（滑る）
                     const stopDist = isBoostMode ? 0.8 : 0.1;
                     
                     if (currentDist > 0.05) {
@@ -296,18 +376,16 @@
 
             // 3. 到着後
             if (isBoostMode) {
-                debugLog("Slipping!!");
-                // 慣性で少しそのまま進む
-                for(let i=0; i<20; i++) { // 約0.3秒
+                // オーバーラン演出
+                for(let i=0; i<20; i++) { 
                     const dir = new THREE.Vector3().subVectors(targetPos, model.position).normalize();
-                    model.position.add(dir.multiplyScalar(0.04)); // 減速せず滑る
+                    model.position.add(dir.multiplyScalar(0.04)); 
                     await new Promise(r => requestAnimationFrame(r));
                 }
                 
                 isMoving = false;
                 await new Promise(r => setTimeout(r, 200));
 
-                debugLog("Oops, backing up...");
                 while (model.position.distanceTo(new THREE.Vector3(targetPos.x, model.position.y, targetPos.z)) > 0.1) {
                     const dir = new THREE.Vector3().subVectors(targetPos, model.position).normalize();
                     model.position.add(dir.multiplyScalar(0.03)); 
