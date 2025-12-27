@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>3D Viewer - Mitsuhashi Manual</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #f0f0f0; touch-action: none; font-family: sans-serif; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        
+        /* UI共通スタイル */
+        .ui-panel {
+            position: absolute; left: 10px;
+            background: rgba(0,0,0,0.6); color: white;
+            padding: 8px 12px; font-family: monospace; font-size: 12px;
+            border-radius: 4px; z-index: 100;
+            backdrop-filter: blur(2px);
+        }
+
+        /* デバッグログ */
+        #debug-log {
+            top: 10px;
+            pointer-events: none; /* 下の操作を邪魔しない */
+        }
+
+        /* 操作説明ボタン */
+        #help-btn {
+            top: 45px; /* ログの下に配置 */
+            cursor: pointer; pointer-events: auto;
+            border: 1px solid rgba(255,255,255,0.3);
+            transition: background 0.2s;
+            display: flex; align-items: center; gap: 5px;
+        }
+        #help-btn:active { background: rgba(0,0,0,0.8); transform: translateY(1px); }
+        #help-btn::before { content: "❓"; font-size: 14px; }
+
+        /* --- モーダル（ヘルプ画面） --- */
+        .modal-overlay {
+            display: none; /* 初期状態は非表示 */
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.6); z-index: 2000;
+            justify-content: center; align-items: center;
+        }
+        .modal-card {
+            background: white; width: 85%; max-width: 320px;
+            padding: 20px; border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            display: flex; flex-direction: column; gap: 10px;
+        }
+        @keyframes popIn {
+            from { transform: scale(0.8); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
+        .modal-header {
+            font-size: 18px; font-weight: bold; color: #333;
+            border-bottom: 2px solid #f0f0f0; padding-bottom: 10px; margin-bottom: 5px;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        
+        /* リスト表示用 */
+        .help-list-item {
+            background: #f8f9fa; padding: 12px; border-radius: 8px;
+            cursor: pointer; font-weight: bold; color: #555;
+            display: flex; justify-content: space-between; align-items: center;
+            transition: background 0.2s; border: 1px solid #eee;
+        }
+        .help-list-item:active { background: #e2e6ea; }
+        .help-list-item::after { content: "▶"; color: #ccc; font-size: 10px; }
+
+        /* 詳細表示用 */
+        .detail-view { display: none; text-align: left; }
+        .detail-title { font-size: 16px; font-weight: bold; color: #ff4757; margin-bottom: 10px; }
+        .detail-desc { font-size: 14px; color: #444; line-height: 1.6; min-height: 80px; }
+        .detail-icon { font-size: 30px; text-align: center; margin: 15px 0; display: block; }
+        
+        /* ボタン類 */
+        .btn-group { display: flex; gap: 10px; margin-top: 10px; }
+        .btn {
+            flex: 1; padding: 10px; border: none; border-radius: 8px;
+            font-weight: bold; cursor: pointer;
+        }
+        .btn-close { background: #666; color: white; }
+        .btn-back { background: #ddd; color: #333; }
+    </style>
+</head>
+<body>
+    <div id="debug-log" class="ui-panel">Status: Ready.</div>
+    <div id="help-btn" class="ui-panel" onclick="openHelpMenu()">操作説明</div>
+
+    <div id="help-modal" class="modal-overlay">
+        <div class="modal-card">
+            <div class="modal-header">
+                <span id="modal-title">メニュー</span>
+                <span style="cursor:pointer; font-size:20px;" onclick="closeModal()">×</span>
+            </div>
+            
+            <div id="menu-list">
+                </div>
+
+            <div id="detail-area" class="detail-view">
+                <div id="detail-content"></div>
+                <div class="btn-group">
+                    <button class="btn btn-back" onclick="showList()">戻る</button>
+                    <button class="btn btn-close" onclick="closeModal()">閉じる</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.166.1/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.166.1/examples/jsm/"
+            }
+        }
+    </script>
+    
+    <script>
+        // --- ヘルプデータ定義 ---
+        const helpContent = [
+            {
+                title: "歩いて移動",
+                icon: "👆",
+                desc: "地面を【1回タップ】すると、ミツハシくんがその場所までトコトコ歩いて移動します。"
+            },
+            {
+                title: "ダッシュ移動",
+                icon: "👆👆",
+                desc: "地面を【ダブルタップ（2回連打）】すると、煙を上げて猛ダッシュ！<br>急ぎすぎて止まれないかも…？"
+            }
+        ];
+
+        // --- UI操作ロジック ---
+        window.isModalOpen = false;
+
+        window.openHelpMenu = function() {
+            window.isModalOpen = true;
+            document.getElementById('help-modal').style.display = 'flex';
+            showList(); // リストを表示
+        };
+
+        window.closeModal = function() {
+            window.isModalOpen = false;
+            document.getElementById('help-modal').style.display = 'none';
+        };
+
+        window.showList = function() {
+            const listEl = document.getElementById('menu-list');
+            const detailEl = document.getElementById('detail-area');
+            const titleEl = document.getElementById('modal-title');
+
+            detailEl.style.display = 'none';
+            listEl.style.display = 'flex';
+            listEl.style.flexDirection = 'column';
+            listEl.style.gap = '8px';
+            titleEl.innerText = '操作説明メニュー';
+
+            // リスト再生成
+            listEl.innerHTML = '';
+            helpContent.forEach((item, index) => {
+                const div = document.createElement('div');
+                div.className = 'help-list-item';
+                div.innerText = item.title;
+                div.onclick = () => showDetail(index);
+                listEl.appendChild(div);
+            });
+        };
+
+        window.showDetail = function(index) {
+            const listEl = document.getElementById('menu-list');
+            const detailEl = document.getElementById('detail-area');
+            const contentEl = document.getElementById('detail-content');
+            const titleEl = document.getElementById('modal-title');
+            const item = helpContent[index];
+
+            listEl.style.display = 'none';
+            detailEl.style.display = 'block';
+            titleEl.innerText = item.title;
+
+            contentEl.innerHTML = `
+                <span class="detail-icon">${item.icon}</span>
+                <div class="detail-desc">${item.desc}</div>
+            `;
+        };
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+        const logElement = document.getElementById('debug-log');
+        function debugLog(msg) { logElement.innerText = "Status: " + msg; }
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 5, 10);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 2.0));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        dirLight.position.set(5, 10, 7);
+        scene.add(dirLight);
+
+        const ground = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshBasicMaterial({ visible: false }));
+        ground.rotation.x = -Math.PI / 2;
+        scene.add(ground);
+
+        let mixer, model, blobShadow, flag;
+        let actions = {}; 
+        let activeAction = null; 
+        
+        let isProcessing = false; 
+        let isMoving = false;     
+        let isBoostMode = false;  
+        let tapTimer = null;      
+        let particles = [];       
+
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+
+        // 影
+        function createShadowTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128; canvas.height = 128;
+            const context = canvas.getContext('2d');
+            const gradient = context.createRadialGradient(64, 64, 0, 64, 64, 64);
+            gradient.addColorStop(0, 'rgba(0,0,0,0.6)');
+            gradient.addColorStop(1, 'rgba(0,0,0,0)');
+            context.fillStyle = gradient;
+            context.fillRect(0, 0, 128, 128);
+            return new THREE.CanvasTexture(canvas);
+        }
+        blobShadow = new THREE.Mesh(
+            new THREE.PlaneGeometry(1.2, 1.2),
+            new THREE.MeshBasicMaterial({ map: createShadowTexture(), transparent: true, depthWrite: false, side: THREE.DoubleSide })
+        );
+        blobShadow.rotation.x = -Math.PI / 2;
+        blobShadow.position.y = 0.005;
+        scene.add(blobShadow);
+
+        // 旗
+        function createFlag() {
+            const group = new THREE.Group();
+            const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1), new THREE.MeshStandardMaterial({ color: 0x888888 }));
+            pole.position.y = 0.5;
+            const cloth = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.02), new THREE.MeshStandardMaterial({ color: 0xff4757 }));
+            cloth.position.set(0.2, 0.8, 0);
+            group.add(pole, cloth);
+            group.visible = false;
+            scene.add(group);
+            return group;
+        }
+        flag = createFlag();
+
+        // 煙作成
+        function createSmoke(spawnPos) {
+            const size = Math.random() * 0.2 + 0.15;
+            const geo = new THREE.SphereGeometry(size, 6, 6);
+            const mat = new THREE.MeshBasicMaterial({ color: 0xdddddd, transparent: true, opacity: 0.5 });
+            const p = new THREE.Mesh(geo, mat);
+            p.position.set(
+                spawnPos.x + (Math.random() - 0.5) * 0.2,
+                0.2, 
+                spawnPos.z + (Math.random() - 0.5) * 0.2
+            );
+            scene.add(p);
+            particles.push({ 
+                mesh: p, 
+                life: 1.0, 
+                velocity: new THREE.Vector3(0, 0.03, 0)
+            });
+        }
+
+        new GLTFLoader().load('./model.glb', (gltf) => {
+            model = gltf.scene;
+            scene.add(model);
+            mixer = new THREE.AnimationMixer(model);
+            gltf.animations.forEach((clip) => {
+                actions[clip.name || `Motion`] = mixer.clipAction(clip);
+            });
+            debugLog("Ready!");
+        });
+
+        // 入力ハンドラ
+        function handleInput(event) {
+            // モーダルが開いている間は3D空間のタップを無効化
+            if (window.isModalOpen) return;
+            // ボタン等UI上のクリックは無視（イベントバブリング対策はCSSのpointer-events制御で対応済だが念のため）
+            if (event.target.closest('.ui-panel')) return;
+
+            if (!model || isProcessing) return;
+
+            let clientX = event.touches ? event.touches[0].clientX : event.clientX;
+            let clientY = event.touches ? event.touches[0].clientY : event.clientY;
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObject(ground);
+
+            if (intersects.length > 0) {
+                const point = intersects[0].point.clone();
+
+                if (tapTimer == null) {
+                    tapTimer = setTimeout(() => {
+                        tapTimer = null;
+                        startNavigation(point, false); 
+                    }, 250); 
+                } else {
+                    clearTimeout(tapTimer);
+                    tapTimer = null;
+                    startNavigation(point, true); 
+                }
+            }
+        }
+
+        window.addEventListener('mousedown', handleInput);
+        window.addEventListener('touchstart', handleInput, { passive: false });
+
+        async function startNavigation(targetPos, boost) {
+            isProcessing = true;
+            isBoostMode = boost;
+            
+            flag.position.copy(targetPos);
+            flag.children[1].material.color.set(isBoostMode ? 0xffd700 : 0xff4757); 
+            flag.visible = true;
+
+            debugLog(isBoostMode ? "BOOST MODE!" : "Walking...");
+
+            const speed = isBoostMode ? 0.12 : 0.06;
+
+            // 1. 方向転換
+            const toTarget = new THREE.Vector3().subVectors(targetPos, model.position);
+            const targetAngle = Math.atan2(toTarget.x, toTarget.z);
+            await turnTowards(targetAngle, false);
+            
+            await new Promise(r => setTimeout(r, 200));
+
+            // 2. 移動
+            const runAction = actions['走行'] || Object.values(actions)[0];
+            await fadeTo(runAction, 0.2);
+            isMoving = true;
+            
+            await new Promise(resolve => {
+                const check = setInterval(() => {
+                    const currentDist = model.position.distanceTo(new THREE.Vector3(targetPos.x, model.position.y, targetPos.z));
+                    const stopDist = isBoostMode ? 0.8 : 0.1;
+                    
+                    if (currentDist > 0.05) {
+                        const dir = new THREE.Vector3().subVectors(targetPos, model.position).normalize();
+                        model.position.add(dir.setY(0).multiplyScalar(speed));
+                        
+                        if (isBoostMode) {
+                            const backOffset = dir.clone().multiplyScalar(-0.4);
+                            const smokePos = model.position.clone().add(backOffset);
+                            if (Math.random() > 0.3) createSmoke(smokePos);
+                        }
+                    }
+
+                    if (currentDist <= stopDist) {
+                        clearInterval(check);
+                        resolve();
+                    }
+                }, 16);
+            });
+
+            // 3. 到着後
+            if (isBoostMode) {
+                // オーバーラン演出
+                for(let i=0; i<20; i++) { 
+                    const dir = new THREE.Vector3().subVectors(targetPos, model.position).normalize();
+                    model.position.add(dir.multiplyScalar(0.04)); 
+                    await new Promise(r => requestAnimationFrame(r));
+                }
+                
+                isMoving = false;
+                await new Promise(r => setTimeout(r, 200));
+
+                while (model.position.distanceTo(new THREE.Vector3(targetPos.x, model.position.y, targetPos.z)) > 0.1) {
+                    const dir = new THREE.Vector3().subVectors(targetPos, model.position).normalize();
+                    model.position.add(dir.multiplyScalar(0.03)); 
+                    await new Promise(r => requestAnimationFrame(r));
+                }
+            } else {
+                isMoving = false;
+            }
+
+            flag.visible = false;
+
+            // 4. 足踏み回転
+            const camPos = new THREE.Vector3();
+            camera.getWorldPosition(camPos);
+            const finalAngle = Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z);
+            await turnTowards(finalAngle, true);
+
+            if (activeAction) activeAction.fadeOut(0.5);
+            activeAction = null;
+            isProcessing = false;
+            debugLog("Ready.");
+        }
+
+        async function turnTowards(targetAngle, isStepping) {
+            const jumpAction = actions['垂直ジャンプ'] || Object.values(actions)[1];
+            const runAction = actions['走行'] || Object.values(actions)[0];
+
+            if (isStepping) {
+                await fadeTo(runAction, 0.2);
+                while (true) {
+                    let diff = targetAngle - model.rotation.y;
+                    while (diff > Math.PI) diff -= Math.PI * 2;
+                    while (diff < -Math.PI) diff += Math.PI * 2;
+                    if (Math.abs(diff) < 0.05) break;
+                    model.rotation.y += Math.sign(diff) * 0.06;
+                    await new Promise(r => requestAnimationFrame(r));
+                }
+            } else {
+                while (true) {
+                    let diff = targetAngle - model.rotation.y;
+                    while (diff > Math.PI) diff -= Math.PI * 2;
+                    while (diff < -Math.PI) diff += Math.PI * 2;
+                    if (Math.abs(diff) < 0.1) break;
+                    const step = Math.sign(diff) * Math.min(Math.abs(diff), Math.PI/3);
+                    await fadeTo(jumpAction, 0.1);
+                    const startR = model.rotation.y;
+                    const startTime = performance.now();
+                    await new Promise(res => {
+                        function r() {
+                            const p = Math.min((performance.now() - startTime) / 800, 1);
+                            model.rotation.y = startR + step * p;
+                            if (p < 1) requestAnimationFrame(r); else res();
+                        }
+                        r();
+                    });
+                }
+            }
+        }
+
+        async function fadeTo(nextAction, duration) {
+            if (!nextAction || activeAction === nextAction) return;
+            if (activeAction) activeAction.fadeOut(duration);
+            nextAction.reset().setEffectiveWeight(1).fadeIn(duration).play();
+            activeAction = nextAction;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = 1/60;
+            if (mixer) mixer.update(delta);
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.life -= 0.02;
+                p.mesh.position.add(p.velocity);
+                p.mesh.material.opacity = p.life;
+                p.mesh.scale.multiplyScalar(1.05);
+                if (p.life <= 0) {
+                    scene.remove(p.mesh);
+                    particles.splice(i, 1);
+                }
+            }
+
+            if (model && blobShadow) {
+                blobShadow.position.set(model.position.x, 0.005, model.position.z);
+                blobShadow.material.opacity = Math.max(0, 1.0 - model.position.y * 0.4);
+                blobShadow.scale.setScalar(Math.max(0.1, 1.0 - model.position.y * 0.3));
+            }
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
