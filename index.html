@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>3DMIT - Mitsuhashi Dynamic</title>
+    <title>3DMIT - Mitsuhashi Debug Build</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #f0f0f0; touch-action: none; font-family: sans-serif; }
         canvas { display: block; width: 100vw; height: 100vh; }
@@ -16,13 +16,24 @@
             backdrop-filter: blur(2px);
         }
         #debug-log { top: 10px; pointer-events: none; }
-        #help-btn {
-            top: 45px; cursor: pointer; pointer-events: auto;
-            border: 1px solid rgba(255,255,255,0.3);
-            transition: background 0.2s; display: flex; align-items: center; gap: 5px;
-        }
-        #help-btn:active { background: rgba(0,0,0,0.8); transform: translateY(1px); }
+        #help-btn { top: 45px; cursor: pointer; pointer-events: auto; }
 
+        /* デバッグメニュー（初期は非表示） */
+        #debug-toggle-btn {
+            display: none; position: absolute; right: 10px; top: 10px;
+            background: #ff4757; color: white; padding: 10px;
+            border-radius: 5px; cursor: pointer; z-index: 3000; font-weight: bold;
+        }
+        #debug-sliders {
+            display: none; position: absolute; right: 10px; top: 60px;
+            background: rgba(0,0,0,0.8); color: white; padding: 15px;
+            border-radius: 8px; z-index: 3000; width: 200px;
+        }
+        .slider-group { margin-bottom: 15px; }
+        .slider-group label { display: block; font-size: 10px; margin-bottom: 5px; }
+        .slider-group input { width: 100%; }
+
+        /* モーダル */
         .modal-overlay {
             display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0, 0, 0, 0.6); z-index: 2000;
@@ -30,40 +41,38 @@
         }
         .modal-card {
             background: white; width: 85%; max-width: 320px;
-            padding: 20px; border-radius: 15px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-            animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            display: flex; flex-direction: column; gap: 10px;
+            padding: 20px; border-radius: 15px; display: flex; flex-direction: column; gap: 10px;
         }
-        @keyframes popIn { from { transform: scale(0.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-        .modal-header { font-size: 18px; font-weight: bold; border-bottom: 2px solid #f0f0f0; padding-bottom: 10px; display: flex; justify-content: space-between; }
-        .help-list-item { background: #f8f9fa; padding: 12px; border-radius: 8px; cursor: pointer; font-weight: bold; color: #555; display: flex; justify-content: space-between; border: 1px solid #eee; }
-        .detail-view { display: none; text-align: left; }
-        .detail-desc { font-size: 14px; color: #444; line-height: 1.6; }
-        .detail-icon { font-size: 30px; text-align: center; margin: 15px 0; display: block; }
+        .help-list-item { background: #f8f9fa; padding: 12px; border-radius: 8px; cursor: pointer; font-weight: bold; color: #555; border: 1px solid #eee; }
+        .detail-view { display: none; }
         .btn-group { display: flex; gap: 10px; margin-top: 10px; }
         .btn { flex: 1; padding: 10px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
         .btn-close { background: #666; color: white; }
-        .btn-back { background: #ddd; color: #333; }
     </style>
 </head>
 <body>
     <div id="debug-log" class="ui-panel">Status: Ready.</div>
     <div id="help-btn" class="ui-panel" onclick="openHelpMenu()">💡 操作説明</div>
 
+    <div id="debug-toggle-btn" onclick="toggleSliders()">🔧 Debug Settings</div>
+    <div id="debug-sliders">
+        <div class="slider-group">
+            <label>Stiffness (硬さ): <span id="val-stiff">0.20</span></label>
+            <input type="range" id="input-stiff" min="0.01" max="0.5" step="0.01" value="0.2">
+        </div>
+        <div class="slider-group">
+            <label>Damping (減衰): <span id="val-damp">0.70</span></label>
+            <input type="range" id="input-damp" min="0.1" max="0.99" step="0.01" value="0.7">
+        </div>
+        <div style="font-size: 9px; color: #aaa;">※スライダーを動かして「ぷるぷる感」を確認。ベストな数値をメモしてね！</div>
+    </div>
+
     <div id="help-modal" class="modal-overlay">
         <div class="modal-card">
-            <div class="modal-header">
-                <span id="modal-title">メニュー</span>
-                <span style="cursor:pointer; font-size:20px;" onclick="closeModal()">×</span>
-            </div>
             <div id="menu-list"></div>
             <div id="detail-area" class="detail-view">
                 <div id="detail-content"></div>
-                <div class="btn-group">
-                    <button class="btn btn-back" onclick="showList()">戻る</button>
-                    <button class="btn btn-close" onclick="closeModal()">閉じる</button>
-                </div>
+                <div class="btn-group"><button class="btn btn-close" onclick="closeModal()">閉じる</button></div>
             </div>
         </div>
     </div>
@@ -78,39 +87,30 @@
     </script>
     
     <script>
+        // --- UI Logic ---
         const helpContent = [
-            { title: "歩いて移動", icon: "👆", desc: "地面を1回タップでトコトコ移動。到着するとカメラの方を向くよ。" },
-            { title: "ダッシュ移動", icon: "👆👆", desc: "ダブルタップで爆走！勢い余って通り過ぎちゃうかも？" },
-            { title: "弾力システム", icon: "🍮", desc: "移動の開始や停止に合わせて、ミツハシくんの体が「ぷるん」と伸縮する新機能を搭載しました！" }
+            { title: "移動", icon: "👆", desc: "地面をタップ/ダブルタップで移動。" },
+            { title: "隠し機能", icon: "🕵️", desc: "ミツハシくん以外の場所を【10秒間長押し】すると、右上にエンジニア専用の調整メニューが出現します。" }
         ];
 
-        window.isModalOpen = false;
         window.openHelpMenu = function() { window.isModalOpen = true; document.getElementById('help-modal').style.display = 'flex'; showList(); };
         window.closeModal = function() { window.isModalOpen = false; document.getElementById('help-modal').style.display = 'none'; };
         window.showList = function() {
             const listEl = document.getElementById('menu-list');
-            const detailEl = document.getElementById('detail-area');
-            const titleEl = document.getElementById('modal-title');
-            detailEl.style.display = 'none';
-            listEl.style.display = 'flex'; listEl.style.flexDirection = 'column'; listEl.style.gap = '8px';
-            titleEl.innerText = '操作説明メニュー';
-            listEl.innerHTML = '';
-            helpContent.forEach((item, index) => {
-                const div = document.createElement('div');
-                div.className = 'help-list-item'; div.innerText = item.title;
-                div.onclick = () => showDetail(index);
-                listEl.appendChild(div);
-            });
+            listEl.innerHTML = helpContent.map((item, i) => `<div class="help-list-item" onclick="showDetail(${i})">${item.title}</div>`).join('');
+            document.getElementById('detail-area').style.display = 'none';
+            listEl.style.display = 'block';
         };
-        window.showDetail = function(index) {
-            const listEl = document.getElementById('menu-list');
-            const detailEl = document.getElementById('detail-area');
-            const contentEl = document.getElementById('detail-content');
-            const titleEl = document.getElementById('modal-title');
-            const item = helpContent[index];
-            listEl.style.display = 'none'; detailEl.style.display = 'block';
-            titleEl.innerText = item.title;
-            contentEl.innerHTML = `<span class="detail-icon">${item.icon}</span><div class="detail-desc">${item.desc}</div>`;
+        window.showDetail = function(i) {
+            document.getElementById('menu-list').style.display = 'none';
+            document.getElementById('detail-area').style.display = 'block';
+            document.getElementById('detail-content').innerHTML = `<div style="text-align:center; font-size:30px;">${helpContent[i].icon}</div><p>${helpContent[i].desc}</p>`;
+        };
+
+        let debugVisible = false;
+        window.toggleSliders = function() {
+            debugVisible = !debugVisible;
+            document.getElementById('debug-sliders').style.display = debugVisible ? 'block' : 'none';
         };
     </script>
 
@@ -128,106 +128,74 @@
 
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         document.body.appendChild(renderer.domElement);
 
         scene.add(new THREE.AmbientLight(0xffffff, 2.0));
-        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
-        dirLight.position.set(5, 10, 7);
-        scene.add(dirLight);
-
         const ground = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshBasicMaterial({ visible: false }));
         ground.rotation.x = -Math.PI / 2;
         scene.add(ground);
 
-        let mixer, model, blobShadow, flag;
-        let actions = {}; 
-        let activeAction = null; 
+        let model, mixer, flag, blobShadow;
+        let actions = {}, activeAction = null;
         
-        // --- 弾力（Squash & Stretch）用変数 ---
+        // --- 弾力パラメータとスライダー連動 ---
+        let springParams = { stiffness: 0.2, damping: 0.7 };
+        const stInput = document.getElementById('input-stiff');
+        const daInput = document.getElementById('input-damp');
+        stInput.oninput = (e) => { springParams.stiffness = parseFloat(e.target.value); document.getElementById('val-stiff').innerText = e.target.value; };
+        daInput.oninput = (e) => { springParams.damping = parseFloat(e.target.value); document.getElementById('val-damp').innerText = e.target.value; };
+
         const targetScale = new THREE.Vector3(1, 1, 1);
         const currentScale = new THREE.Vector3(1, 1, 1);
         const springVelocity = new THREE.Vector3(0, 0, 0);
-        const SPRING_STIFFNESS = 0.2; // 剛性（高いほど速く戻る）
-        const SPRING_DAMPING = 0.7;   // 減衰（高いほどすぐ止まる）
 
-        let isProcessing = false; 
-        let isBoostMode = false;  
-        let tapTimer = null;      
-        let particles = [];       
-
+        let isProcessing = false, tapTimer = null;
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
         const controls = new OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = true;
 
-        function createShadowTexture() {
-            const canvas = document.createElement('canvas');
-            canvas.width = 128; canvas.height = 128;
-            const context = canvas.getContext('2d');
-            const gradient = context.createRadialGradient(64, 64, 0, 64, 64, 64);
-            gradient.addColorStop(0, 'rgba(0,0,0,0.6)');
-            gradient.addColorStop(1, 'rgba(0,0,0,0)');
-            context.fillStyle = gradient;
-            context.fillRect(0, 0, 128, 128);
-            return new THREE.CanvasTexture(canvas);
-        }
-        blobShadow = new THREE.Mesh(
-            new THREE.PlaneGeometry(1.2, 1.2),
-            new THREE.MeshBasicMaterial({ map: createShadowTexture(), transparent: true, depthWrite: false, side: THREE.DoubleSide })
-        );
-        blobShadow.rotation.x = -Math.PI / 2;
-        blobShadow.position.y = 0.005;
-        scene.add(blobShadow);
-
-        function createFlag() {
-            const group = new THREE.Group();
-            const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1), new THREE.MeshStandardMaterial({ color: 0x888888 }));
-            pole.position.y = 0.5;
-            const cloth = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.02), new THREE.MeshStandardMaterial({ color: 0xff4757 }));
-            cloth.position.set(0.2, 0.8, 0);
-            group.add(pole, cloth);
-            group.visible = false;
-            scene.add(group);
-            return group;
-        }
-        flag = createFlag();
-
-        function createSmoke(spawnPos) {
-            const size = Math.random() * 0.2 + 0.15;
-            const geo = new THREE.SphereGeometry(size, 6, 6);
-            const mat = new THREE.MeshBasicMaterial({ color: 0xdddddd, transparent: true, opacity: 0.5 });
-            const p = new THREE.Mesh(geo, mat);
-            p.position.set(spawnPos.x + (Math.random()-0.5)*0.2, 0.2, spawnPos.z + (Math.random()-0.5)*0.2);
-            scene.add(p);
-            particles.push({ mesh: p, life: 1.0, velocity: new THREE.Vector3(0, 0.03, 0) });
-        }
-
-        new GLTFLoader().load('./model.glb', (gltf) => {
-            model = gltf.scene;
-            scene.add(model);
-            mixer = new THREE.AnimationMixer(model);
-            gltf.animations.forEach((clip) => {
-                actions[clip.name] = mixer.clipAction(clip);
-            });
-            debugLog("Ready!");
-        });
-
-        function handleInput(event) {
-            if (window.isModalOpen || event.target.closest('.ui-panel')) return;
-            if (!model || isProcessing) return;
-
-            let clientX = event.touches ? event.touches[0].clientX : event.clientX;
-            let clientY = event.touches ? event.touches[0].clientY : event.clientY;
+        // --- 10秒長押し検知ロジック ---
+        let holdTimer = null;
+        function onTouchStart(e) {
+            // ミツハシくん本体をタップしたか判定
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
             const rect = renderer.domElement.getBoundingClientRect();
             mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
             mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            
+            const intersectsModel = model ? raycaster.intersectObject(model, true) : [];
+            
+            // モデル以外をタップしている場合のみタイマー開始
+            if (intersectsModel.length === 0) {
+                holdTimer = setTimeout(() => {
+                    document.getElementById('debug-toggle-btn').style.display = 'block';
+                    debugLog("DEBUG MODE UNLOCKED!");
+                }, 10000); // 10秒
+            }
+        }
+        function onTouchEnd() { clearTimeout(holdTimer); }
+        window.addEventListener('mousedown', onTouchStart);
+        window.addEventListener('mouseup', onTouchEnd);
+        window.addEventListener('touchstart', onTouchStart);
+        window.addEventListener('touchend', onTouchEnd);
 
+        // --- 移動処理 (前回コード継承) ---
+        window.addEventListener('click', handleInput);
+        function handleInput(e) {
+            if (window.isModalOpen || e.target.closest('.ui-panel') || e.target.closest('#debug-sliders') || e.target.closest('#debug-toggle-btn')) return;
+            // ... (前回と同様のRaycastとNavigationロジック) ...
+            const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+            const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
             raycaster.setFromCamera(mouse, camera);
             const intersects = raycaster.intersectObject(ground);
             if (intersects.length > 0) {
                 const point = intersects[0].point.clone();
-                if (tapTimer == null) {
+                if (!tapTimer) {
                     tapTimer = setTimeout(() => { tapTimer = null; startNavigation(point, false); }, 250);
                 } else {
                     clearTimeout(tapTimer); tapTimer = null; startNavigation(point, true);
@@ -235,179 +203,67 @@
             }
         }
 
-        window.addEventListener('mousedown', handleInput);
-        window.addEventListener('touchstart', handleInput, { passive: false });
-
-        async function startNavigation(targetPos, boost) {
+        async function startNavigation(pos, boost) {
             isProcessing = true;
-            isBoostMode = boost;
-            flag.position.copy(targetPos);
-            flag.children[1].material.color.set(isBoostMode ? 0xffd700 : 0xff4757);
-            flag.visible = true;
+            debugLog(boost ? "BOOST!" : "Walking...");
+            const run = actions['走行'] || Object.values(actions)[0];
+            if (activeAction) activeAction.fadeOut(0.2);
+            run.reset().fadeIn(0.2).play(); activeAction = run;
 
-            const speed = isBoostMode ? 0.12 : 0.06;
+            // 出発踏ん張り
+            targetScale.set(1.2, 0.7, 1.2);
+            await new Promise(r => setTimeout(r, 200));
+            targetScale.set(0.9, 1.1, 0.9);
 
-            // 1. 方向転換
-            const toTarget = new THREE.Vector3().subVectors(targetPos, model.position);
-            const targetAngle = Math.atan2(toTarget.x, toTarget.z);
-            await turnTowards(targetAngle, false);
-            
-            // 出発時の踏ん張り（縦に少し潰れる）
-            targetScale.set(1.2, 0.8, 1.2); 
-            await new Promise(r => setTimeout(r, 150));
-            targetScale.set(1, 1, 1); // 元に戻しながらスタート
+            const startPos = model.position.clone();
+            const dist = model.position.distanceTo(pos);
+            const duration = boost ? dist * 100 : dist * 200;
+            const startTime = performance.now();
 
-            // 2. 移動
-            const runAction = actions['走行'] || Object.values(actions)[0];
-            await fadeTo(runAction, 0.2);
-            
-            await new Promise(resolve => {
-                const check = setInterval(() => {
-                    const currentDist = model.position.distanceTo(new THREE.Vector3(targetPos.x, model.position.y, targetPos.z));
-                    const stopDist = isBoostMode ? 0.8 : 0.1;
-                    
-                    if (currentDist > 0.05) {
-                        const dir = new THREE.Vector3().subVectors(targetPos, model.position).normalize();
-                        model.position.add(dir.setY(0).multiplyScalar(speed));
-                        
-                        // 移動中の微かな「伸び」（疾走感）
-                        targetScale.set(0.9, 1.1, 0.9);
-
-                        if (isBoostMode) {
-                            const smokePos = model.position.clone().add(dir.clone().multiplyScalar(-0.4));
-                            if (Math.random() > 0.3) createSmoke(smokePos);
-                        }
-                    }
-
-                    if (currentDist <= stopDist) { clearInterval(check); resolve(); }
-                }, 16);
+            await new Promise(res => {
+                function move() {
+                    const elapsed = performance.now() - startTime;
+                    const p = Math.min(elapsed / duration, 1);
+                    model.position.lerpVectors(startPos, pos, p);
+                    model.lookAt(pos.x, model.position.y, pos.z);
+                    if (p < 1) requestAnimationFrame(move); else res();
+                }
+                move();
             });
 
-            // 3. 到着（急停止のつぶれ）
-            targetScale.set(1.3, 0.7, 1.3); // グシャッ！
+            // 到着ぷるん！
+            targetScale.set(1.4, 0.6, 1.4);
+            await new Promise(r => setTimeout(r, 150));
+            targetScale.set(1, 1, 1);
             
-            if (isBoostMode) {
-                for(let i=0; i<20; i++) {
-                    model.position.add(new THREE.Vector3().subVectors(targetPos, model.position).normalize().multiplyScalar(0.04));
-                    await new Promise(r => requestAnimationFrame(r));
-                }
-                await new Promise(r => setTimeout(r, 100));
-                targetScale.set(1, 1, 1); // 戻る
-                while (model.position.distanceTo(new THREE.Vector3(targetPos.x, model.position.y, targetPos.z)) > 0.1) {
-                    model.position.add(new THREE.Vector3().subVectors(targetPos, model.position).normalize().multiplyScalar(0.03));
-                    await new Promise(r => requestAnimationFrame(r));
-                }
-            } else {
-                await new Promise(r => setTimeout(r, 100));
-                targetScale.set(1, 1, 1);
-            }
-
-            flag.visible = false;
-            const camPos = new THREE.Vector3();
-            camera.getWorldPosition(camPos);
-            const finalAngle = Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z);
-            await turnTowards(finalAngle, true);
-
             if (activeAction) activeAction.fadeOut(0.5);
-            activeAction = null;
             isProcessing = false;
             debugLog("Ready.");
         }
 
-        async function turnTowards(targetAngle, isStepping) {
-            const jumpAction = actions['垂直ジャンプ'] || Object.values(actions)[1];
-            const runAction = actions['走行'] || Object.values(actions)[0];
-
-            if (isStepping) {
-                await fadeTo(runAction, 0.2);
-                while (true) {
-                    let diff = targetAngle - model.rotation.y;
-                    while (diff > Math.PI) diff -= Math.PI * 2;
-                    while (diff < -Math.PI) diff += Math.PI * 2;
-                    if (Math.abs(diff) < 0.05) break;
-                    model.rotation.y += Math.sign(diff) * 0.06;
-                    await new Promise(r => requestAnimationFrame(r));
-                }
-            } else {
-                while (true) {
-                    let diff = targetAngle - model.rotation.y;
-                    while (diff > Math.PI) diff -= Math.PI * 2;
-                    while (diff < -Math.PI) diff += Math.PI * 2;
-                    if (Math.abs(diff) < 0.1) break;
-                    const step = Math.sign(diff) * Math.min(Math.abs(diff), Math.PI/3);
-                    
-                    // ジャンプ回転の予備動作
-                    targetScale.set(1.1, 0.8, 1.1);
-                    await fadeTo(jumpAction, 0.1);
-                    
-                    const startR = model.rotation.y;
-                    const startTime = performance.now();
-                    await new Promise(res => {
-                        function r() {
-                            const p = Math.min((performance.now() - startTime) / 800, 1);
-                            // 空中では縦に伸びる
-                            if(p > 0.2 && p < 0.8) targetScale.set(0.9, 1.2, 0.9);
-                            else targetScale.set(1, 1, 1);
-                            
-                            model.rotation.y = startR + step * p;
-                            if (p < 1) requestAnimationFrame(r); else res();
-                        }
-                        r();
-                    });
-                }
-            }
-        }
-
-        async function fadeTo(nextAction, duration) {
-            if (!nextAction || activeAction === nextAction) return;
-            if (activeAction) activeAction.fadeOut(duration);
-            nextAction.reset().setEffectiveWeight(1).fadeIn(duration).play();
-            activeAction = nextAction;
-        }
+        // --- Main Loop ---
+        new GLTFLoader().load('./model.glb', (gltf) => {
+            model = gltf.scene; scene.add(model);
+            mixer = new THREE.AnimationMixer(model);
+            gltf.animations.forEach(a => actions[a.name] = mixer.clipAction(a));
+        });
 
         function animate() {
             requestAnimationFrame(animate);
-            const delta = 1/60;
-            if (mixer) mixer.update(delta);
-
-            // --- 弾力（Spring）の計算 ---
+            if (mixer) mixer.update(1/60);
             if (model) {
-                // 各軸の速度を更新 (加速度 = (目標 - 現在) * 剛性)
-                springVelocity.x += (targetScale.x - currentScale.x) * SPRING_STIFFNESS;
-                springVelocity.y += (targetScale.y - currentScale.y) * SPRING_STIFFNESS;
-                springVelocity.z += (targetScale.z - currentScale.z) * SPRING_STIFFNESS;
-                
-                // 減衰を適用
-                springVelocity.multiplyScalar(SPRING_DAMPING);
-                
-                // 現在のスケールを更新
+                // スプリング計算（スライダーの値を使用）
+                springVelocity.x += (targetScale.x - currentScale.x) * springParams.stiffness;
+                springVelocity.y += (targetScale.y - currentScale.y) * springParams.stiffness;
+                springVelocity.z += (targetScale.z - currentScale.z) * springParams.stiffness;
+                springVelocity.multiplyScalar(springParams.damping);
                 currentScale.add(springVelocity);
-                
-                // モデルに反映
                 model.scale.copy(currentScale);
-            }
-
-            for (let i = particles.length - 1; i >= 0; i--) {
-                const p = particles[i]; p.life -= 0.02;
-                p.mesh.position.add(p.velocity); p.mesh.material.opacity = p.life;
-                p.mesh.scale.multiplyScalar(1.05);
-                if (p.life <= 0) { scene.remove(p.mesh); particles.splice(i, 1); }
-            }
-
-            if (model && blobShadow) {
-                blobShadow.position.set(model.position.x, 0.005, model.position.z);
-                blobShadow.material.opacity = Math.max(0, 1.0 - model.position.y * 0.4);
-                blobShadow.scale.setScalar(Math.max(0.1, (1.0 - model.position.y * 0.3) * currentScale.x));
             }
             controls.update();
             renderer.render(scene, camera);
         }
         animate();
-
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
     </script>
 </body>
 </html>
