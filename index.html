@@ -85,11 +85,32 @@
         }
         .debug-btn:active { background: #555; }
         input[type=range] { width: 100%; accent-color: #00ffcc; }
+
+        /* --- エモーションポップ（吹き出し） --- */
+        #emote-pop {
+            display: none;
+            position: absolute;
+            font-size: 40px;
+            font-weight: bold;
+            color: #ff4757;
+            text-shadow: 2px 2px 0px white, -2px -2px 0px white, 2px -2px 0px white, -2px 2px 0px white;
+            pointer-events: none;
+            z-index: 500;
+            animation: bounce 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            transform-origin: bottom center;
+        }
+        @keyframes bounce {
+            0% { transform: scale(0) translateY(20px); opacity: 0; }
+            50% { transform: scale(1.2) translateY(-10px); opacity: 1; }
+            100% { transform: scale(1) translateY(0); opacity: 1; }
+        }
     </style>
 </head>
 <body>
-    <div id="status-log" class="ui-panel">Status: Ready.</div>
+    <div id="status-log" class="ui-panel">Status: Initializing...</div>
     <div id="help-btn" class="ui-panel" onclick="openHelpMenu()">操作説明</div>
+    
+    <div id="emote-pop">！</div>
 
     <div id="help-modal" class="modal-overlay">
         <div class="modal-card">
@@ -225,9 +246,11 @@
 
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
         
-        // カメラ初期位置
+        // 通常時のカメラ位置
         const DEFAULT_CAM_POS = new THREE.Vector3(0, 6, 12);
-        camera.position.copy(DEFAULT_CAM_POS);
+        
+        // オープニング時の初期設定はロード完了後に適用
+        camera.position.set(0, 5, 10); 
 
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
@@ -259,7 +282,8 @@
         let isProcessing = false; 
         let isMoving = false;     
         let isBoostMode = false;     
-        let particles = [];       
+        let particles = [];
+        let isOpening = true; // オープニング中フラグ      
 
         // 入力制御
         let lastTapTime = 0;
@@ -274,12 +298,13 @@
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         controls.maxPolarAngle = Math.PI / 2 - 0.1;
+        controls.enabled = false; // オープニング中は無効化
 
-        // --- リセット関数（デバッグ用） ---
+        // --- リセット関数 ---
         window.resetCamera = function() {
+            if (isOpening) return;
             camera.position.copy(DEFAULT_CAM_POS);
             if (model) {
-                // モデルがいればモデルの重心を見る
                 controls.target.copy(model.position).setY(0.5);
             } else {
                 controls.target.set(0, 0, 0);
@@ -289,12 +314,11 @@
         };
 
         window.resetModel = function() {
-            if (!model) return;
+            if (!model || isOpening) return;
             if (activeAction) activeAction.fadeOut(0.2);
             isMoving = false;
             isProcessing = false;
             
-            // 座標リセット
             model.position.set(0, 0, 0);
             model.rotation.set(0, 0, 0);
             
@@ -303,10 +327,7 @@
                 idle.reset().play();
                 activeAction = idle;
             }
-            
-            // カメラターゲットも強制追従
             controls.target.set(0, 0.5, 0);
-            
             debugLog("Model Reset.");
         };
 
@@ -367,13 +388,113 @@
             
             if (Object.values(actions).length > 2) specialAction = Object.values(actions)[2];
             
-            resetIdleTimer();
-            debugLog("Ready!");
+            // ★オープニングシーケンス開始
+            runOpeningSequence();
         });
+
+        // --- ★オープニングシーケンス ---
+        async function runOpeningSequence() {
+            debugLog("Opening sequence...");
+            
+            // 1. 初期配置: 円の端(Z=-12)に配置、カメラを見る(Y=0)
+            model.position.set(0, 0, -12);
+            model.rotation.set(0, 0, 0);
+            
+            // カメラ: 円の中心から奥を見る配置
+            // (0, 1.5, 5) あたりから (0, 1, -12) を見るイメージ
+            camera.position.set(0, 1.5, 4);
+            controls.target.set(0, 0.8, -12);
+            controls.update();
+
+            // アイドル再生
+            const idle = actions['Motion 0'] || Object.values(actions)[0];
+            idle.play();
+            activeAction = idle;
+
+            // 2. 「！」ポップ表示
+            const pop = document.getElementById('emote-pop');
+            pop.style.display = 'block';
+            updateEmotePosition(); // 位置合わせ
+            
+            // 0.5秒待機
+            await new Promise(r => setTimeout(r, 600));
+            
+            // ポップ消去
+            pop.style.display = 'none';
+
+            // 3. 走行開始 (Z=-12 -> Z=-2)
+            debugLog("Opening: Running...");
+            const run = actions['走行'] || Object.values(actions)[0];
+            await fadeTo(run, 0.2);
+            
+            isMoving = true;
+            const targetZ = -2.0;
+            const runSpeed = 0.15; // 少し早めに登場
+
+            while (model.position.z < targetZ) {
+                model.position.z += runSpeed;
+                // 簡易的な足音煙
+                if (Math.random() > 0.7) {
+                    createSmoke(model.position.clone().add(new THREE.Vector3(0,0,-0.5)));
+                }
+                controls.target.set(0, 0.8, model.position.z); // カメラはモデルを見続ける
+                controls.update();
+                await new Promise(r => requestAnimationFrame(r));
+            }
+
+            // 停止
+            isMoving = false;
+            await fadeTo(idle, 0.3);
+
+            // 4. カメラをプレイ視点へ移行
+            debugLog("Ready!");
+            const startCamPos = camera.position.clone();
+            const endCamPos = DEFAULT_CAM_POS.clone();
+            const steps = 60; // 1秒かけて移動
+            
+            for(let i=0; i<=steps; i++) {
+                const t = i/steps;
+                // easeOutCubic
+                const ease = 1 - Math.pow(1 - t, 3);
+                camera.position.lerpVectors(startCamPos, endCamPos, ease);
+                
+                // ターゲットも少し見下ろし気味に調整
+                const currentTarget = controls.target.clone();
+                const endTarget = new THREE.Vector3(0, 0.5, -2);
+                controls.target.lerpVectors(currentTarget, endTarget, 0.1);
+                
+                controls.update();
+                await new Promise(r => requestAnimationFrame(r));
+            }
+
+            // 完了: 操作解禁
+            isOpening = false;
+            controls.enabled = true;
+            resetIdleTimer();
+        }
+
+        function updateEmotePosition() {
+            if (!model) return;
+            const pop = document.getElementById('emote-pop');
+            if (pop.style.display === 'none') return;
+
+            // モデルの頭上左上あたりの座標を取得
+            // ミツハシくんの身長に合わせてYを調整(ここでは1.8m想定)
+            const headPos = model.position.clone().add(new THREE.Vector3(-0.3, 2.0, 0));
+            headPos.project(camera);
+
+            const x = (headPos.x * .5 + .5) * window.innerWidth;
+            const y = (-(headPos.y * .5) + .5) * window.innerHeight;
+
+            pop.style.left = `${x}px`;
+            pop.style.top = `${y}px`;
+        }
+
 
         // --- 入力イベント ---
         
         window.addEventListener('pointerdown', (e) => {
+            if (isOpening) return; // ★操作ブロック
             if (e.target.closest('.ui-panel') || e.target.closest('#debug-panel') || window.isModalOpen) return;
             isDragging = false;
             pointerDownPos.set(e.clientX, e.clientY);
@@ -386,10 +507,11 @@
         });
 
         window.addEventListener('pointerup', (e) => {
+            if (isOpening) return; // ★操作ブロック
             if (e.target.closest('.ui-panel') || e.target.closest('#debug-panel') || window.isModalOpen) return;
-            if (isDragging) return; // ドラッグ操作は無視
+            if (isDragging) return;
 
-            // --- トリプルタップ（デバッグ起動）判定 ---
+            // トリプルタップ判定
             const now = Date.now();
             if (now - lastTapTime < 350) {
                 tapStreak++;
@@ -405,7 +527,6 @@
                 return;
             }
 
-            // --- 通常のアクション判定 ---
             handleTapAction(e);
         });
 
@@ -418,19 +539,15 @@
             mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
             raycaster.setFromCamera(mouse, camera);
 
-            // 1. モデル判定
             const intersectsModel = raycaster.intersectObject(model, true);
             if (intersectsModel.length > 0) {
                 playSpecialAction("Tap on Model");
                 return;
             }
 
-            // 2. 地面判定
             const intersects = raycaster.intersectObject(ground);
             if (intersects.length > 0) {
                 const point = intersects[0].point.clone();
-                
-                // ダブルタップ判定
                 if (tapResetTimer) {
                     clearTimeout(tapResetTimer);
                     tapResetTimer = null;
@@ -447,6 +564,7 @@
         // --- ロジック ---
 
         function resetIdleTimer() {
+            if (isOpening) return;
             if (idleTimer) clearTimeout(idleTimer);
             idleTimer = setTimeout(() => playSpecialAction("Idle Timeout"), 30000); 
         }
@@ -475,7 +593,6 @@
             await fadeTo(runAction, 0.2);
             isMoving = true;
             
-            // パラメータ適用
             const speed = isBoostMode ? window.params.dashSpeed : window.params.walkSpeed;
             const stopDist = isBoostMode ? 0.8 : 0.1;
 
@@ -501,14 +618,12 @@
             });
 
             if (isBoostMode) {
-                // オーバーラン演出
                 for(let i=0; i<15; i++) { 
                     model.position.add(new THREE.Vector3().subVectors(targetPos, model.position).normalize().multiplyScalar(speed * 0.5));
                     await new Promise(r => requestAnimationFrame(r));
                 }
                 isMoving = false;
                 await new Promise(r => setTimeout(r, 100));
-                // 戻る
                 while (model.position.distanceTo(new THREE.Vector3(targetPos.x, model.position.y, targetPos.z)) > 0.1) {
                     model.position.add(new THREE.Vector3().subVectors(targetPos, model.position).normalize().multiplyScalar(0.03));
                     await new Promise(r => requestAnimationFrame(r));
@@ -584,7 +699,6 @@
             }
 
             if (model) {
-                // 影追従
                 if (blobShadow) {
                     blobShadow.position.set(model.position.x, 0.01, model.position.z);
                     const s = Math.max(0.1, 1.0 - model.position.y * 0.5);
@@ -592,11 +706,14 @@
                     blobShadow.material.opacity = s * 0.6;
                 }
 
-                // ★カメラターゲット制御★
-                // 条件: ユーザーが手動でカメラをドラッグ操作していない間は、常に重心を追いかける
-                if (!isDragging) {
-                    const targetPos = model.position.clone().setY(0.5); // 重心付近(Y=0.5)
-                    // 補間係数0.1で滑らかに追従
+                // ポップ表示位置更新
+                updateEmotePosition();
+
+                // カメラ制御: 
+                // 1. オープニング中は手動で制御(runOpeningSequence内)するため、ここでのlerpは行わない
+                // 2. ドラッグ中も無効
+                if (!isOpening && !isDragging) {
+                    const targetPos = model.position.clone().setY(0.5);
                     controls.target.lerp(targetPos, 0.1);
                 }
             }
