@@ -3,179 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>3D Viewer - Mitsuhashi Manual</title>
+    <title>3D Viewer - Debug Ver.</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #e0e0e0; touch-action: none; font-family: sans-serif; }
         canvas { display: block; width: 100vw; height: 100vh; }
         
-        /* UI共通スタイル */
-        .ui-panel {
-            position: absolute; left: 10px;
-            background: rgba(0,0,0,0.6); color: white;
+        #status-log {
+            position: absolute; top: 10px; left: 10px;
+            background: rgba(0,0,0,0.7); color: white;
             padding: 8px 12px; font-family: monospace; font-size: 12px;
-            border-radius: 4px; z-index: 100;
-            backdrop-filter: blur(2px);
-            user-select: none;
+            pointer-events: none; border-radius: 4px;
         }
 
-        #status-log { top: 10px; pointer-events: none; }
-
-        #help-btn {
-            top: 45px; cursor: pointer; pointer-events: auto;
-            border: 1px solid rgba(255,255,255,0.3);
-            display: flex; align-items: center; gap: 5px;
-        }
-        #help-btn::before { content: "❓"; font-size: 14px; }
-
-        /* --- モーダル（ヘルプ） --- */
-        .modal-overlay {
-            display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0, 0, 0, 0.6); z-index: 2000;
-            justify-content: center; align-items: center;
-        }
-        .modal-card {
-            background: white; width: 85%; max-width: 320px;
-            padding: 20px; border-radius: 15px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-            display: flex; flex-direction: column; gap: 10px;
-            animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-        }
-        @keyframes popIn { from { transform: scale(0.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-        .modal-header {
-            font-size: 18px; font-weight: bold; color: #333;
-            border-bottom: 2px solid #f0f0f0; padding-bottom: 10px; margin-bottom: 5px;
-            display: flex; justify-content: space-between; align-items: center;
-        }
-        .help-list-item {
-            background: #f8f9fa; padding: 12px; border-radius: 8px; cursor: pointer;
-            font-weight: bold; color: #555; display: flex; justify-content: space-between; align-items: center;
-            border: 1px solid #eee;
-        }
-        .detail-view { display: none; text-align: left; }
-        .detail-icon { font-size: 30px; text-align: center; margin: 15px 0; display: block; }
-        .btn-group { display: flex; gap: 10px; margin-top: 10px; }
-        .btn { flex: 1; padding: 10px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
-        .btn-close { background: #666; color: white; }
-
-        /* --- デバッグパネル --- */
-        #debug-panel {
-            display: none;
-            position: absolute; top: 50%; left: 50%;
-            transform: translate(-50%, -50%);
-            width: 85%; max-width: 350px;
-            background: rgba(20, 20, 30, 0.95);
-            color: #00ffcc;
-            border: 1px solid #00ffcc;
-            border-radius: 10px;
-            padding: 20px;
-            z-index: 3000;
-            font-family: monospace;
-            box-shadow: 0 0 20px rgba(0, 255, 204, 0.2);
-        }
-        .debug-title {
-            font-size: 16px; font-weight: bold; border-bottom: 1px dashed #00ffcc;
-            margin-bottom: 15px; padding-bottom: 5px; text-align: center;
-        }
-        .debug-section { margin-bottom: 15px; }
-        .debug-label { display: block; margin-bottom: 5px; font-size: 12px; color: #aaa; }
-        .debug-row { display: flex; gap: 10px; margin-bottom: 10px; }
-        .debug-btn {
-            flex: 1; background: #333; color: white; border: 1px solid #555;
-            padding: 8px; border-radius: 4px; cursor: pointer; font-family: monospace;
-        }
-        .debug-btn:active { background: #555; }
-        input[type=range] { width: 100%; accent-color: #00ffcc; }
-
-        /* --- エモーションポップ（吹き出し） --- */
+        /* エモーションポップ */
         #emote-pop {
-            display: none;
-            position: absolute;
-            font-size: 40px;
-            font-weight: bold;
-            color: #ff4757;
+            display: none; position: absolute;
+            font-size: 40px; font-weight: bold; color: #ff4757;
             text-shadow: 2px 2px 0px white, -2px -2px 0px white, 2px -2px 0px white, -2px 2px 0px white;
-            pointer-events: none;
-            z-index: 500;
-            animation: bounce 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            transform-origin: bottom center;
+            pointer-events: none; z-index: 500;
         }
-        @keyframes bounce {
-            0% { transform: scale(0) translateY(20px); opacity: 0; }
-            50% { transform: scale(1.2) translateY(-10px); opacity: 1; }
-            100% { transform: scale(1) translateY(0); opacity: 1; }
-        }
-
-        /* --- アクションメニュー --- */
-        #action-menu {
-            display: none;
-            position: absolute;
-            background: white;
-            padding: 5px;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-            z-index: 1500;
-            animation: fadeIn 0.2s ease-out;
-        }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
-        .action-item {
-            padding: 10px 20px;
-            background: #3498db;
-            color: white;
-            border-radius: 5px;
-            cursor: pointer;
-            font-weight: bold;
-            text-align: center;
-            white-space: nowrap;
-        }
-        .action-item:active { background: #2980b9; }
     </style>
 </head>
 <body>
-    <div id="status-log" class="ui-panel">Status: Initializing...</div>
-    <div id="help-btn" class="ui-panel" onclick="openHelpMenu()">操作説明</div>
-    
+    <div id="status-log">Status: Initializing...</div>
     <div id="emote-pop">！</div>
-
-    <div id="action-menu">
-        <div class="action-item" onclick="window.triggerSoccerBall()">サッカーボール</div>
-    </div>
-
-    <div id="help-modal" class="modal-overlay">
-        <div class="modal-card">
-            <div class="modal-header">
-                <span id="modal-title">メニュー</span>
-                <span style="cursor:pointer; font-size:20px;" onclick="closeModal()">×</span>
-            </div>
-            <div id="menu-list"></div>
-            <div id="detail-area" class="detail-view">
-                <div id="detail-content"></div>
-                <div class="btn-group">
-                    <button class="btn" style="background:#ddd" onclick="showList()">戻る</button>
-                    <button class="btn btn-close" onclick="closeModal()">閉じる</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div id="debug-panel">
-        <div class="debug-title">DEBUG MENU</div>
-        <div class="debug-section">
-            <div class="debug-label">INITIALIZE</div>
-            <div class="debug-row">
-                <button class="debug-btn" onclick="resetCamera()">Reset Camera</button>
-                <button class="debug-btn" onclick="resetModel()">Reset Model</button>
-            </div>
-        </div>
-        <div class="debug-section">
-            <div class="debug-label">PARAMETERS</div>
-            <label>Walk Speed: <span id="val-walk">0.06</span></label>
-            <input type="range" min="0.01" max="0.2" step="0.01" value="0.06" oninput="updateParam('walk', this.value)">
-            <div style="height:10px"></div>
-            <label>Dash Speed: <span id="val-dash">0.12</span></label>
-            <input type="range" min="0.05" max="0.4" step="0.01" value="0.12" oninput="updateParam('dash', this.value)">
-        </div>
-        <button class="btn btn-close" style="width:100%" onclick="closeDebug()">CLOSE</button>
-    </div>
 
     <script type="importmap">
         {
@@ -186,91 +37,22 @@
         }
     </script>
     
-    <script>
-        window.params = { walkSpeed: 0.06, dashSpeed: 0.12 };
-
-        // --- UI / ヘルプ制御 ---
-        const helpContent = [
-            { title: "歩いて移動", icon: "👆", desc: "地面を【1回タップ】" },
-            { title: "ダッシュ移動", icon: "👆👆", desc: "地面を【2回連打】" },
-            { title: "アイドリング", icon: "🤫", desc: "ミツハシくんを放置すると開始" },
-            { title: "アイテムメニュー", icon: "🎒", desc: "ミツハシくんを【ダブルタップ】" },
-            { title: "デバッグモード", icon: "🔧", desc: "画面のどこかを【3回連打】" }
-        ];
-
-        window.isModalOpen = false;
-        window.openHelpMenu = function() {
-            window.isModalOpen = true;
-            document.getElementById('help-modal').style.display = 'flex';
-            showList();
-        };
-        window.closeModal = function() {
-            window.isModalOpen = false;
-            document.getElementById('help-modal').style.display = 'none';
-        };
-        window.showList = function() {
-            const listEl = document.getElementById('menu-list');
-            const detailEl = document.getElementById('detail-area');
-            const titleEl = document.getElementById('modal-title');
-            detailEl.style.display = 'none'; listEl.style.display = 'flex'; listEl.style.flexDirection = 'column'; listEl.style.gap = '8px';
-            titleEl.innerText = '操作説明メニュー';
-            listEl.innerHTML = '';
-            helpContent.forEach((item, index) => {
-                const div = document.createElement('div');
-                div.className = 'help-list-item';
-                div.innerHTML = `${item.title} <span>▶</span>`;
-                div.onclick = () => {
-                    listEl.style.display = 'none';
-                    detailEl.style.display = 'block';
-                    titleEl.innerText = item.title;
-                    document.getElementById('detail-content').innerHTML = `<span class="detail-icon">${item.icon}</span><div>${item.desc}</div>`;
-                };
-                listEl.appendChild(div);
-            });
-        };
-
-        // デバッグ
-        window.isDebugOpen = false;
-        window.openDebug = function() {
-            if (window.isModalOpen) return;
-            window.isDebugOpen = true;
-            document.getElementById('debug-panel').style.display = 'block';
-        };
-        window.closeDebug = function() {
-            window.isDebugOpen = false;
-            document.getElementById('debug-panel').style.display = 'none';
-        };
-        window.updateParam = function(key, val) {
-            const num = parseFloat(val);
-            if (key === 'walk') { window.params.walkSpeed = num; document.getElementById('val-walk').innerText = num.toFixed(2); }
-            else if (key === 'dash') { window.params.dashSpeed = num; document.getElementById('val-dash').innerText = num.toFixed(2); }
-        };
-
-        // メニュー閉じる
-        window.closeActionMenu = function() {
-            document.getElementById('action-menu').style.display = 'none';
-        }
-        
-        // ★重要: モジュール外から呼び出せるように空の関数を定義しておく
-        window.triggerSoccerBall = function() { console.log("Not loaded yet"); };
-
-    </script>
-
     <script type="module">
         import * as THREE from 'three';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-        const statusEl = document.getElementById('status-log');
-        function debugLog(msg) { statusEl.innerText = "Status: " + msg; }
+        const logEl = document.getElementById('status-log');
+        function debugLog(msg) { logEl.innerText = msg; console.log(msg); }
 
+        // --- シーン設定 ---
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0xe0e0e0);
         scene.fog = new THREE.Fog(0xe0e0e0, 10, 50);
 
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
         const DEFAULT_CAM_POS = new THREE.Vector3(0, 6, 12);
-        camera.position.set(0, 5, 10); 
+        camera.position.set(0, 5, 10);
 
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
@@ -278,12 +60,18 @@
         renderer.shadowMap.enabled = true;
         document.body.appendChild(renderer.domElement);
 
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.enabled = false; // オープニング中は無効
+
+        // ライト
         scene.add(new THREE.AmbientLight(0xffffff, 1.5));
         const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
         dirLight.position.set(5, 10, 5);
         dirLight.castShadow = true;
         scene.add(dirLight);
 
+        // 地面
         const ground = new THREE.Mesh(
             new THREE.CircleGeometry(15, 64),
             new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.4, side: THREE.DoubleSide })
@@ -292,216 +80,92 @@
         ground.receiveShadow = true;
         scene.add(ground);
 
-        let mixer, model, blobShadow, flag;
-        let actions = {}; 
-        let activeAction = null; 
-        
-        let idlingAction = null;
-        let ballAction = null; // アニメーション4番
-        let idleTimer = null;
-        
-        let soccerBallModel = null;
+        // --- 変数 ---
+        let mixer;
+        let model;
+        let actions = []; // 配列で管理 (0:Idle, 1:Jump, 2:Special, 3:Soccer)
+        let activeAction = null;
+        let soccerBall = null;
         let rightHandBone = null;
-
-        let isProcessing = false; 
-        let isMoving = false;     
-        let isBoostMode = false;     
-        let particles = [];
-        let isOpening = true; 
-
-        // 入力制御
-        let lastTapTime = 0;
-        let tapStreak = 0;
-        let tapResetTimer = null;
-        let pointerDownPos = new THREE.Vector2();
-        let isDragging = false;
         
-        let modelTapTimer = null;
+        // フラグ
+        let isOpening = true;
+        let isProcessing = false;
+        let isMoving = false;
 
-        const raycaster = new THREE.Raycaster();
-        const mouse = new THREE.Vector2();
-        
-        const controls = new OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = true;
-        controls.maxPolarAngle = Math.PI / 2 - 0.1;
-        controls.enabled = false;
+        // 入力用
+        let tapTimer = null;
+        let raycaster = new THREE.Raycaster();
+        let mouse = new THREE.Vector2();
 
-        // --- リセット関数 ---
-        window.resetCamera = function() {
-            if (isOpening) return;
-            camera.position.copy(DEFAULT_CAM_POS);
-            if (model) controls.target.copy(model.position).setY(0.5);
-            else controls.target.set(0, 0, 0);
-            controls.update();
-            debugLog("Camera Reset.");
-        };
-
-        window.resetModel = function() {
-            if (!model || isOpening) return;
-            if (activeAction) activeAction.fadeOut(0.2);
-            isMoving = false;
-            isProcessing = false;
-            model.position.set(0, 0, 0);
-            model.rotation.set(0, 0, 0);
-            const idle = actions['Motion 0'] || Object.values(actions)[0];
-            if (idle) {
-                idle.reset().play();
-                activeAction = idle;
-            }
-            if (soccerBallModel) soccerBallModel.visible = false; 
-            controls.target.set(0, 0.5, 0);
-            debugLog("Model Reset.");
-        };
-
-        // --- オブジェクト生成 ---
-        function createShadowTexture() {
-            const canvas = document.createElement('canvas');
-            canvas.width = 64; canvas.height = 64;
-            const ctx = canvas.getContext('2d');
-            const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-            g.addColorStop(0, 'rgba(0,0,0,0.4)');
-            g.addColorStop(1, 'rgba(0,0,0,0)');
-            ctx.fillStyle = g;
-            ctx.fillRect(0, 0, 64, 64);
-            return new THREE.CanvasTexture(canvas);
-        }
-        blobShadow = new THREE.Mesh(
+        // 影
+        const blobShadow = new THREE.Mesh(
             new THREE.PlaneGeometry(1.2, 1.2),
-            new THREE.MeshBasicMaterial({ map: createShadowTexture(), transparent: true, depthWrite: false, side: THREE.DoubleSide })
+            new THREE.MeshBasicMaterial({ color:0x000000, transparent: true, opacity: 0.3, depthWrite: false })
         );
         blobShadow.rotation.x = -Math.PI / 2;
-        blobShadow.position.y = 0.01;
         scene.add(blobShadow);
 
-        function createFlag() {
-            const g = new THREE.Group();
-            const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1), new THREE.MeshStandardMaterial({ color: 0x888888 }));
-            pole.position.y = 0.5;
-            const cloth = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.02), new THREE.MeshStandardMaterial({ color: 0xff4757 }));
-            cloth.position.set(0.2, 0.8, 0);
-            cloth.castShadow = true;
-            g.add(pole, cloth);
-            g.visible = false;
-            scene.add(g);
-            return g;
-        }
-        flag = createFlag();
+        // 旗
+        const flagGroup = new THREE.Group();
+        flagGroup.add(new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1), new THREE.MeshStandardMaterial({ color: 0x888888 })));
+        const cloth = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.02), new THREE.MeshStandardMaterial({ color: 0xff0000 }));
+        cloth.position.set(0.2, 0.4, 0);
+        flagGroup.add(cloth);
+        flagGroup.visible = false;
+        scene.add(flagGroup);
 
-        function createSmoke(pos) {
-            const m = new THREE.Mesh(
-                new THREE.SphereGeometry(Math.random()*0.2+0.1, 5, 5),
-                new THREE.MeshBasicMaterial({ color: 0xdddddd, transparent: true, opacity: 0.6 })
-            );
-            m.position.copy(pos).add(new THREE.Vector3((Math.random()-.5)*0.3, 0.2, (Math.random()-.5)*0.3));
-            scene.add(m);
-            particles.push({ mesh: m, life: 1.0, vel: new THREE.Vector3(0, 0.03, 0) });
-        }
-
-        // --- GLTFロード ---
+        // --- ロード処理 ---
         const loader = new GLTFLoader();
-        
         loader.load('./model.glb', (gltf) => {
             model = gltf.scene;
             model.traverse(c => { if(c.isMesh) c.castShadow = true; });
             scene.add(model);
-            
-            // ボーン取得
+
+            // ボーン取得 (Mixamo系名称対応)
             rightHandBone = model.getObjectByName('mixamorigRightHand') || model.getObjectByName('RightHand') || model.getObjectByName('Hand.R');
 
             mixer = new THREE.AnimationMixer(model);
-            gltf.animations.forEach((clip, i) => {
-                actions[clip.name || `Motion${i}`] = mixer.clipAction(clip);
+            
+            // アニメーションを配列に格納
+            // インデックス順: 0:Idle, 1:Jump, 2:Special, 3:Soccer(New)
+            gltf.animations.forEach((clip) => {
+                actions.push(mixer.clipAction(clip));
             });
-            
-            const actionValues = Object.values(actions);
-            // 3番目(index2) = アイドリング
-            if (actionValues.length > 2) {
-                idlingAction = actionValues[2];
-                idlingAction.setLoop(THREE.LoopRepeat);
+
+            debugLog(`Loaded: ${actions.length} animations`);
+
+            // 4番目(index 3)の設定
+            if (actions[3]) {
+                actions[3].setLoop(THREE.LoopOnce);
+                actions[3].clampWhenFinished = true;
             }
-            // 4番目(index3) = ボール取り出し
-            if (actionValues.length > 3) {
-                ballAction = actionValues[3];
-                ballAction.setLoop(THREE.LoopOnce);
-                ballAction.clampWhenFinished = true;
-            } else {
-                console.warn("Animation 4 not found. Total:", actionValues.length);
-            }
-            
-            runOpeningSequence();
+
+            runOpening();
         });
 
         // サッカーボールロード
         function loadSoccerBall() {
-            if (soccerBallModel) return; 
+            if (soccerBall) return;
             loader.load('./soccer_ball.glb', (gltf) => {
-                soccerBallModel = gltf.scene;
-                soccerBallModel.scale.set(0.2, 0.2, 0.2); 
-                soccerBallModel.visible = false; // 最初は隠す
-
+                soccerBall = gltf.scene;
+                soccerBall.scale.set(0.2, 0.2, 0.2);
+                soccerBall.visible = false;
                 if (rightHandBone) {
-                    rightHandBone.add(soccerBallModel);
-                    soccerBallModel.position.set(0.1, 0.05, 0.05); 
+                    rightHandBone.add(soccerBall);
+                    soccerBall.position.set(0.1, 0.05, 0.05); // 位置調整
                 } else {
-                    scene.add(soccerBallModel);
+                    scene.add(soccerBall);
                 }
-            }, undefined, (e) => console.error("Ball load failed", e));
+                debugLog("Ball Loaded");
+            });
         }
 
-        // --- ★サッカーボール選択時の実行関数 ---
-        // モジュール内で定義し、windowオブジェクトに紐付ける
-        window.triggerSoccerBall = async function() {
-            window.closeActionMenu();
-            if (isProcessing || isMoving) return;
-            
-            // アニメーションがない場合のガード
-            if (!ballAction) {
-                debugLog("Err: No Animation 4");
-                // もし4番目がなくても3番目があれば代用するなどの処理が可能ですが、今回は警告のみ
-                return; 
-            }
-            
-            isProcessing = true;
-            resetIdleTimer();
-            debugLog("Action: Soccer Ball");
+        // --- オープニング ---
+        async function runOpening() {
+            debugLog("Opening Start");
 
-            // 1. ボール読み込み (エラーがあっても止まらないように非同期で投げっぱなしにする)
-            loadSoccerBall();
-
-            // 2. カメラの方を向く
-            const camPos = new THREE.Vector3();
-            camera.getWorldPosition(camPos);
-            await turnTowards(Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z), true);
-
-            // 3. アニメーション再生
-            await fadeTo(ballAction, 0.3);
-
-            // 4. ボール表示タイミング調整 (0.5秒後に表示)
-            setTimeout(() => {
-                if (soccerBallModel && activeAction === ballAction) {
-                    soccerBallModel.visible = true;
-                }
-            }, 500);
-
-            // アニメーション終了待ち (秒数分待機)
-            const duration = ballAction.getClip().duration;
-            await new Promise(r => setTimeout(r, duration * 1000));
-            
-            // 5. 終了後の待機
-            await new Promise(r => setTimeout(r, 1000));
-            
-            // 6. 待機ポーズへ戻る
-            const idle = actions['Motion 0'] || Object.values(actions)[0];
-            await fadeTo(idle, 0.5);
-            
-            isProcessing = false;
-            resetIdleTimer();
-        };
-
-        // --- オープニングシーケンス ---
-        async function runOpeningSequence() {
-            debugLog("Opening...");
-            
+            // 1. 配置
             model.position.set(0, 0, -12);
             model.rotation.set(0, 0, 0);
             
@@ -509,296 +173,220 @@
             controls.target.set(0, 0.8, -12);
             controls.update();
 
-            // アイドリングループ
-            let startAnim = actions['Motion 0'] || Object.values(actions)[0];
-            if (idlingAction) startAnim = idlingAction;
-            
-            startAnim.reset().play();
-            activeAction = startAnim;
+            // 2. アイドリング再生
+            const idle = actions[0];
+            idle.reset().play();
+            activeAction = idle;
 
-            // 2秒待機
-            await new Promise(r => setTimeout(r, 2000));
+            await wait(1000);
 
-            // ！表示
+            // 3. 「！」表示
             const pop = document.getElementById('emote-pop');
             pop.style.display = 'block';
-            updateEmotePosition(); 
-            
-            await new Promise(r => setTimeout(r, 500));
+            updatePopPos();
+            await wait(500);
             pop.style.display = 'none';
 
-            await new Promise(r => setTimeout(r, 500));
+            await wait(500);
 
-            // 走行
-            const run = actions['走行'] || Object.values(actions)[0];
-            await fadeTo(run, 0.2);
+            // 4. 走行開始
+            debugLog("Run...");
+            const run = actions[0].getClip().name.includes('Motion') ? (actions['走行'] || actions[0]) : actions[0]; 
+            // ※モデルのアクション名が不明確なため、index 0 以外でループするものを探すのが確実ですが、
+            // 今回はとりあえず actions[0] から遷移させます。
+            // もし actions[0] が走行ならそのまま、そうでなければ GLB の構造依存。
+            // ここでは簡易的に「フェードして移動」させます。
             
-            isMoving = true;
-            const targetZ = -2.0;
-            const runSpeed = 0.15;
+            // もし actions配列に名前があればそれを使う、なければ index 0 (Idle) を使う
+            // ここでは GLB の中身を信じて、移動アニメーションっぽく動かします
+            // ★重要: もし走行アニメが特定できなければ Idle のまま滑りますが、まずはロジック確認
+            
+            // 前回のコード同様、走行用アニメを探す試み
+            let runAnim = actions.find(a => a.getClip().name.includes('Running') || a.getClip().name.includes('Run') || a.getClip().name === '走行');
+            if (!runAnim) runAnim = actions[0]; // なければIdleで滑る
 
-            while (model.position.z < targetZ) {
-                model.position.z += runSpeed;
-                if (Math.random() > 0.7) createSmoke(model.position.clone().add(new THREE.Vector3(0,0,-0.5)));
+            await fadeTo(runAnim, 0.2);
+            isMoving = true;
+
+            // 移動ループ
+            while (model.position.z < -2.0) {
+                model.position.z += 0.15;
                 controls.target.set(0, 0.8, model.position.z);
                 controls.update();
                 await new Promise(r => requestAnimationFrame(r));
             }
 
             isMoving = false;
+            debugLog("Stop!");
 
-            // ★完全停止処理
-            mixer.stopAllAction(); // 全停止
-            
-            const idle = actions['Motion 0'] || Object.values(actions)[0];
-            idle.reset().play(); // 待機モーション再生
-            activeAction = idle;
-            
+            // ★強制停止と切り替え★
+            mixer.stopAllAction(); // 全て止める
+            actions[0].reset().play(); // Idleを再生
+            activeAction = actions[0];
             mixer.update(0); // 描画更新
 
-            // カメラ移動
-            const startCamPos = camera.position.clone();
-            const endCamPos = DEFAULT_CAM_POS.clone();
-            const steps = 60;
-            
-            for(let i=0; i<=steps; i++) {
-                const t = i/steps;
-                const ease = 1 - Math.pow(1 - t, 3);
-                camera.position.lerpVectors(startCamPos, endCamPos, ease);
-                
-                const currentTarget = controls.target.clone();
-                const endTarget = new THREE.Vector3(0, 0.5, -2);
-                controls.target.lerpVectors(currentTarget, endTarget, 0.1);
-                
-                controls.update();
-                await new Promise(r => requestAnimationFrame(r));
-            }
+            // カメラを定位置へ（演出なしで即座に）
+            camera.position.copy(DEFAULT_CAM_POS);
+            controls.target.set(0, 0.5, 0);
+            controls.update();
 
             isOpening = false;
             controls.enabled = true;
-            resetIdleTimer();
-            debugLog("Ready!");
+            debugLog("Ready: Click Model!");
         }
 
-        function updateEmotePosition() {
-            if (!model) return;
-            const pop = document.getElementById('emote-pop');
-            if (pop.style.display === 'none') return;
-            const headPos = model.position.clone().add(new THREE.Vector3(-0.3, 2.0, 0));
-            headPos.project(camera);
-            const x = (headPos.x * .5 + .5) * window.innerWidth;
-            const y = (-(headPos.y * .5) + .5) * window.innerHeight;
-            pop.style.left = `${x}px`;
-            pop.style.top = `${y}px`;
-        }
-
-        // --- 入力イベント ---
-        window.addEventListener('pointerdown', (e) => {
-            if (isOpening) return;
-            window.closeActionMenu();
-            if (e.target.closest('.ui-panel') || e.target.closest('#debug-panel') || e.target.closest('#action-menu') || window.isModalOpen) return;
-            isDragging = false;
-            pointerDownPos.set(e.clientX, e.clientY);
-        });
-
-        window.addEventListener('pointermove', (e) => {
-            if (new THREE.Vector2(e.clientX, e.clientY).distanceTo(pointerDownPos) > 10) {
-                isDragging = true;
-            }
-        });
-
+        // --- クリック・タップ処理 ---
         window.addEventListener('pointerup', (e) => {
-            if (isOpening) return;
-            if (e.target.closest('.ui-panel') || e.target.closest('#debug-panel') || e.target.closest('#action-menu') || window.isModalOpen) return;
-            if (isDragging) return;
+            if (isOpening || isProcessing || isMoving) return;
 
-            const now = Date.now();
-            if (now - lastTapTime < 350) tapStreak++;
-            else tapStreak = 1;
-            lastTapTime = now;
-            if (tapStreak === 3) { window.openDebug(); debugLog("Debug Mode Opened"); tapStreak = 0; return; }
-
-            handleTapAction(e);
-        });
-
-        function handleTapAction(event) {
-            if (!model || isProcessing) return;
-            resetIdleTimer();
-
+            // 座標計算
             const rect = renderer.domElement.getBoundingClientRect();
-            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
             raycaster.setFromCamera(mouse, camera);
 
             // モデル判定
-            const intersectsModel = raycaster.intersectObject(model, true);
-            if (intersectsModel.length > 0) {
-                // ダブルタップ判定
-                if (modelTapTimer) {
-                    clearTimeout(modelTapTimer);
-                    modelTapTimer = null;
-                    // Double Tap -> Menu
-                    showActionMenu(event.clientX, event.clientY);
+            const hits = raycaster.intersectObject(model, true);
+            if (hits.length > 0) {
+                // モデルをクリックした
+                if (tapTimer) {
+                    // ダブルクリック -> アニメーション3 (Special)
+                    clearTimeout(tapTimer);
+                    tapTimer = null;
+                    playSpecialAnim();
                 } else {
-                    modelTapTimer = setTimeout(() => {
-                        modelTapTimer = null;
-                        // Single Tap -> Idling
-                        playIdlingAction("Tap on Model");
-                    }, 250);
+                    tapTimer = setTimeout(() => {
+                        // シングルクリック -> アニメーション4 (Soccer)
+                        tapTimer = null;
+                        playSoccerAnim();
+                    }, 300);
                 }
                 return;
             }
 
             // 地面判定
-            const intersects = raycaster.intersectObject(ground);
-            if (intersects.length > 0) {
-                const point = intersects[0].point.clone();
-                if (tapResetTimer) {
-                    clearTimeout(tapResetTimer);
-                    tapResetTimer = null;
-                    startNavigation(point, true);
-                } else {
-                    tapResetTimer = setTimeout(() => {
-                        tapResetTimer = null;
-                        startNavigation(point, false);
-                    }, 250);
-                }
+            const grounds = raycaster.intersectObject(ground);
+            if (grounds.length > 0) {
+                moveTo(grounds[0].point);
             }
-        }
+        });
 
-        function showActionMenu(x, y) {
-            const menu = document.getElementById('action-menu');
-            menu.style.display = 'block';
-            menu.style.left = x + 'px';
-            menu.style.top = (y - 50) + 'px';
-            debugLog("Menu Opened");
-        }
+        // --- アクション実行 ---
 
-        function resetIdleTimer() {
-            if (isOpening) return;
-            if (idleTimer) clearTimeout(idleTimer);
-            idleTimer = setTimeout(() => playIdlingAction("Idle Timeout"), 30000); 
-        }
-
-        async function playIdlingAction(source) {
-            if (isProcessing || isMoving || !idlingAction) return;
-            debugLog(`Idling: ${source}`);
-            await fadeTo(idlingAction, 0.5);
-        }
-
-        async function startNavigation(targetPos, boost) {
+        // ダブルクリック: アニメーション3 (Index 2)
+        async function playSpecialAnim() {
+            if (!actions[2]) { debugLog("No Anim 3"); return; }
+            debugLog("Play: Special (Anim 3)");
             isProcessing = true;
-            isBoostMode = boost;
-            resetIdleTimer();
-            flag.position.copy(targetPos);
-            flag.children[1].material.color.set(isBoostMode ? 0xffd700 : 0xff4757); 
-            flag.visible = true;
-            debugLog(isBoostMode ? "Dash!" : "Walking...");
-            const toTarget = new THREE.Vector3().subVectors(targetPos, model.position);
-            await turnTowards(Math.atan2(toTarget.x, toTarget.z), false);
-            const runAction = actions['走行'] || Object.values(actions)[0];
-            await fadeTo(runAction, 0.2);
+
+            await fadeTo(actions[2], 0.3);
+            
+            // 30秒待機とかではなく、一度再生したら戻る設定にします（検証用）
+            const dur = actions[2].getClip().duration;
+            await wait(dur * 1000);
+
+            await fadeTo(actions[0], 0.5);
+            isProcessing = false;
+        }
+
+        // シングルクリック: アニメーション4 (Index 3) + サッカーボール
+        async function playSoccerAnim() {
+            if (!actions[3]) { debugLog("No Anim 4"); return; }
+            debugLog("Play: Soccer (Anim 4)");
+            isProcessing = true;
+
+            loadSoccerBall(); // ボール読み込み
+
+            await fadeTo(actions[3], 0.3);
+
+            // ボール表示タイミング(簡易)
+            setTimeout(() => {
+                if (soccerBall) soccerBall.visible = true;
+            }, 500);
+
+            const dur = actions[3].getClip().duration;
+            await wait(dur * 1000);
+
+            // 少し待ってから戻る
+            await wait(1000);
+            
+            await fadeTo(actions[0], 0.5);
+            isProcessing = false;
+        }
+
+        // 移動
+        async function moveTo(pos) {
             isMoving = true;
-            const speed = isBoostMode ? window.params.dashSpeed : window.params.walkSpeed;
-            const stopDist = isBoostMode ? 0.8 : 0.1;
-            await new Promise(resolve => {
-                const interval = setInterval(() => {
-                    resetIdleTimer();
-                    const dist = model.position.distanceTo(new THREE.Vector3(targetPos.x, model.position.y, targetPos.z));
-                    if (dist > 0.05) {
-                        const dir = new THREE.Vector3().subVectors(targetPos, model.position).normalize();
-                        model.position.add(dir.setY(0).multiplyScalar(speed));
-                        if (isBoostMode && Math.random() > 0.3) createSmoke(model.position.clone().add(dir.multiplyScalar(-0.4)));
-                    }
-                    if (dist <= stopDist) { clearInterval(interval); resolve(); }
-                }, 16);
-            });
-            if (isBoostMode) {
-                for(let i=0; i<15; i++) { model.position.add(new THREE.Vector3().subVectors(targetPos, model.position).normalize().multiplyScalar(speed * 0.5)); await new Promise(r => requestAnimationFrame(r)); }
-                isMoving = false;
-                await new Promise(r => setTimeout(r, 100));
-                while (model.position.distanceTo(new THREE.Vector3(targetPos.x, model.position.y, targetPos.z)) > 0.1) {
-                    model.position.add(new THREE.Vector3().subVectors(targetPos, model.position).normalize().multiplyScalar(0.03));
-                    await new Promise(r => requestAnimationFrame(r));
-                }
-            } else {
-                isMoving = false;
+            flagGroup.position.copy(pos);
+            flagGroup.visible = true;
+
+            // 向き変更
+            const targetRot = Math.atan2(pos.x - model.position.x, pos.z - model.position.z);
+            model.rotation.y = targetRot;
+
+            // 走る
+            const run = actions.length > 1 ? actions[0] : actions[0]; // 仮
+            await fadeTo(run, 0.2);
+
+            while(model.position.distanceTo(pos) > 0.1) {
+                const dir = new THREE.Vector3().subVectors(pos, model.position).normalize();
+                model.position.add(dir.multiplyScalar(0.06));
+                
+                // カメラ追従
+                const t = model.position.clone().setY(0.5);
+                controls.target.lerp(t, 0.1);
+                controls.update();
+
+                await new Promise(r => requestAnimationFrame(r));
             }
-            flag.visible = false;
+
+            flagGroup.visible = false;
+            isMoving = false;
+            
+            // カメラ向きに戻る
             const camPos = new THREE.Vector3();
             camera.getWorldPosition(camPos);
-            await turnTowards(Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z), true);
-            if (activeAction) activeAction.fadeOut(0.5);
-            activeAction = null;
-            isProcessing = false;
-            resetIdleTimer();
-            debugLog("Ready.");
+            const camRot = Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z);
+            model.rotation.y = camRot;
+
+            await fadeTo(actions[0], 0.3);
         }
 
-        async function turnTowards(targetAngle, isStepping) {
-            const jumpAction = actions['垂直ジャンプ'] || Object.values(actions)[1];
-            const runAction = actions['走行'] || Object.values(actions)[0];
-            if (isStepping) {
-                await fadeTo(runAction, 0.2);
-                while (true) {
-                    let diff = targetAngle - model.rotation.y;
-                    while (diff > Math.PI) diff -= Math.PI * 2;
-                    while (diff < -Math.PI) diff += Math.PI * 2;
-                    if (Math.abs(diff) < 0.05) break;
-                    model.rotation.y += Math.sign(diff) * 0.08;
-                    await new Promise(r => requestAnimationFrame(r));
-                }
-            } else {
-                let diff = targetAngle - model.rotation.y;
-                while (diff > Math.PI) diff -= Math.PI * 2;
-                while (diff < -Math.PI) diff += Math.PI * 2;
-                if (Math.abs(diff) > 0.3) {
-                    await fadeTo(jumpAction, 0.1);
-                    const startRot = model.rotation.y;
-                    const steps = 30;
-                    for (let i = 0; i <= steps; i++) {
-                        model.rotation.y = startRot + (diff * (i/steps));
-                        await new Promise(r => requestAnimationFrame(r));
-                    }
-                    await new Promise(r => setTimeout(r, 50));
-                } else {
-                    model.rotation.y = targetAngle;
-                }
-            }
-        }
-
-        async function fadeTo(next, dur) {
-            if (!next || activeAction === next) return;
-            if (activeAction) activeAction.fadeOut(dur);
-            next.reset().setEffectiveWeight(1).fadeIn(dur).play();
+        // --- ユーティリティ ---
+        async function fadeTo(next, time) {
+            if (activeAction === next) return;
+            if (activeAction) activeAction.fadeOut(time);
+            next.reset().setEffectiveWeight(1).fadeIn(time).play();
             activeAction = next;
+            // 少し待ってフェードを反映させる
+            await wait(time * 1000);
         }
 
+        function wait(ms) {
+            return new Promise(r => setTimeout(r, ms));
+        }
+
+        function updatePopPos() {
+            if (!model) return;
+            const pop = document.getElementById('emote-pop');
+            if (pop.style.display === 'none') return;
+            const pos = model.position.clone().add(new THREE.Vector3(0, 2, 0));
+            pos.project(camera);
+            const x = (pos.x * .5 + .5) * window.innerWidth;
+            const y = (-(pos.y * .5) + .5) * window.innerHeight;
+            pop.style.left = x + 'px';
+            pop.style.top = y + 'px';
+        }
+
+        // ループ
         function animate() {
             requestAnimationFrame(animate);
-            if (mixer) mixer.update(1/60);
-            for (let i = particles.length - 1; i >= 0; i--) {
-                const p = particles[i];
-                p.life -= 0.03;
-                p.mesh.position.add(p.vel);
-                p.mesh.scale.multiplyScalar(1.03);
-                p.mesh.material.opacity = p.life;
-                if (p.life <= 0) { scene.remove(p.mesh); particles.splice(i, 1); }
+            if (mixer) mixer.update(0.02);
+            if (model && blobShadow) {
+                blobShadow.position.set(model.position.x, 0.01, model.position.z);
             }
-            if (model) {
-                if (blobShadow) {
-                    blobShadow.position.set(model.position.x, 0.01, model.position.z);
-                    const s = Math.max(0.1, 1.0 - model.position.y * 0.5);
-                    blobShadow.scale.set(s, s, 1);
-                    blobShadow.material.opacity = s * 0.6;
-                }
-                updateEmotePosition();
-                if (!isOpening && !isDragging) {
-                    const targetPos = model.position.clone().setY(0.5);
-                    controls.target.lerp(targetPos, 0.1);
-                }
-            }
-            controls.update();
+            if(isOpening) updatePopPos();
+            
             renderer.render(scene, camera);
         }
         animate();
