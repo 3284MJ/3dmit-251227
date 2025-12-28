@@ -79,7 +79,8 @@ scene.add(ground);
 let mixer, model, blobShadow, flag;
 let actions = {}; 
 let activeAction = null; 
-let idlingAction = null;
+let idlingAction = null; // ループ用 (旧アニメ4 / Index 3)
+let specialAction = null; // 1回再生用 (旧アニメ3 / Index 2)
 let idleTimer = null;
 let isProcessing = false, isMoving = false, isBoostMode = false, isOpening = true, isDragging = false;
 let lastTapTime = 0, tapStreak = 0, tapResetTimer = null;
@@ -122,7 +123,24 @@ new GLTFLoader().load('./model.glb', (gltf) => {
     scene.add(model);
     mixer = new THREE.AnimationMixer(model);
     gltf.animations.forEach((clip, i) => { actions[clip.name || `Motion${i}`] = mixer.clipAction(clip); });
-    if (Object.values(actions).length > 2) { idlingAction = Object.values(actions)[2]; idlingAction.setLoop(THREE.LoopRepeat); }
+    
+    // 【修正】割り当て逆転とループ設定
+    const actionList = Object.values(actions);
+    if (actionList.length > 3) {
+        // アニメ3 (Index 2) -> 1回再生用 (特殊アクション)
+        specialAction = actionList[2];
+        specialAction.setLoop(THREE.LoopOnce);
+        specialAction.clampWhenFinished = true;
+
+        // アニメ4 (Index 3) -> ループ用 (アイドリング)
+        idlingAction = actionList[3];
+        idlingAction.setLoop(THREE.LoopRepeat);
+    } else if (actionList.length > 2) {
+        // もし3つしかない場合のフォールバック
+        idlingAction = actionList[2];
+        idlingAction.setLoop(THREE.LoopRepeat);
+    }
+    
     runOpeningSequence();
 });
 
@@ -131,19 +149,32 @@ async function runOpeningSequence() {
     model.position.set(0, 0, -12);
     camera.position.set(0, 1.5, 4);
     controls.target.set(0, 0.8, -12); controls.update();
+    
     let startAnim = actions['Motion 0'] || Object.values(actions)[0];
     if (idlingAction) startAnim = idlingAction;
     startAnim.play(); activeAction = startAnim;
+    
     await new Promise(r => setTimeout(r, 2000));
     const pop = document.getElementById('emote-pop'); pop.style.display = 'block'; updateEmotePosition();
     await new Promise(r => setTimeout(r, 1000)); pop.style.display = 'none';
+    
     const run = actions['走行'] || Object.values(actions)[0];
     await fadeTo(run, 0.2); isMoving = true;
-    while (model.position.z < -2.0) { model.position.z += 0.15; controls.target.set(0, 0.8, model.position.z); controls.update(); await new Promise(r => requestAnimationFrame(r)); }
+    while (model.position.z < -2.0) { 
+        model.position.z += 0.15; 
+        controls.target.set(0, 0.8, model.position.z); 
+        controls.update(); 
+        await new Promise(r => requestAnimationFrame(r)); 
+    }
     isMoving = false;
+    
     const idle = actions['Motion 0'] || Object.values(actions)[0];
     await fadeTo(idle, 0.3);
-    camera.position.copy(DEFAULT_CAM_POS); controls.target.set(0, 0.5, -2); controls.update();
+
+    // 【修正】カメラ位置を戻さず、重心位置のみ更新
+    controls.target.set(0, 0.5, -2); 
+    controls.update();
+
     isOpening = false; controls.enabled = true; resetIdleTimer(); debugLog("Ready.");
 }
 
@@ -188,9 +219,21 @@ function handleTapAction(event) {
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     raycaster.setFromCamera(mouse, camera);
     const intersectsModel = raycaster.intersectObject(model, true);
+    
     if (intersectsModel.length > 0) {
-        if (tapResetTimer) { clearTimeout(tapResetTimer); tapResetTimer = null; playIdlingAction("Double Tap"); }
-        else { tapResetTimer = setTimeout(() => { tapResetTimer = null; playSoccerPlaceholder(); }, 250); }
+        if (tapResetTimer) { 
+            // ダブルタップ時 -> アニメ3 (Index 2) を実行 (ループなし)
+            clearTimeout(tapResetTimer); 
+            tapResetTimer = null; 
+            if (specialAction) fadeTo(specialAction, 0.5);
+        }
+        else { 
+            // シングルタップ時 -> アニメ4 (Index 3) を実行 (ループ)
+            tapResetTimer = setTimeout(() => { 
+                tapResetTimer = null; 
+                if (idlingAction) fadeTo(idlingAction, 0.5);
+            }, 250); 
+        }
         return;
     }
     const intersects = raycaster.intersectObject(ground);
@@ -204,10 +247,6 @@ function handleTapAction(event) {
 // --- Actions ---
 function resetIdleTimer() { if (idleTimer) clearTimeout(idleTimer); idleTimer = setTimeout(() => playIdlingAction("Idle Timeout"), 30000); }
 async function playIdlingAction(src) { if (isProcessing || isMoving || !idlingAction) return; await fadeTo(idlingAction, 0.5); }
-async function playSoccerPlaceholder() {
-    const soccerAnim = Object.values(actions)[3]; // index 3
-    if (soccerAnim) await fadeTo(soccerAnim, 0.5);
-}
 
 async function startNavigation(targetPos, boost) {
     isProcessing = true; isBoostMode = boost;
