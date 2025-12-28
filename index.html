@@ -174,7 +174,7 @@
         const helpContent = [
             { title: "歩いて移動", icon: "👆", desc: "地面を【1回タップ】" },
             { title: "ダッシュ移動", icon: "👆👆", desc: "地面を【2回連打】" },
-            { title: "ひみつのアクション", icon: "🤫", desc: "ミツハシくんをタップ、または放置" },
+            { title: "アイドリング", icon: "🤫", desc: "ミツハシくんをタップ、または放置" },
             { title: "デバッグモード", icon: "🔧", desc: "画面のどこかを【3回連打】" }
         ];
 
@@ -276,14 +276,16 @@
         let mixer, model, blobShadow, flag;
         let actions = {}; 
         let activeAction = null; 
-        let specialAction = null;
+        
+        // ★名称変更: idlingAction
+        let idlingAction = null;
         let idleTimer = null;
         
         let isProcessing = false; 
         let isMoving = false;     
         let isBoostMode = false;     
         let particles = [];
-        let isOpening = true; // オープニング中フラグ      
+        let isOpening = true; 
 
         // 入力制御
         let lastTapTime = 0;
@@ -386,7 +388,12 @@
                 actions[clip.name || `Motion${i}`] = mixer.clipAction(clip);
             });
             
-            if (Object.values(actions).length > 2) specialAction = Object.values(actions)[2];
+            // ★アイドリングアクション取得
+            if (Object.values(actions).length > 2) {
+                idlingAction = Object.values(actions)[2];
+                // ★ループ設定（通常時もループさせる）
+                idlingAction.setLoop(THREE.LoopRepeat);
+            }
             
             // ★オープニングシーケンス開始
             runOpeningSequence();
@@ -404,13 +411,10 @@
             controls.target.set(0, 0.8, -12);
             controls.update();
 
-            // 2. アニメーション3 (SpecialAction) をループ再生
-            // なければアイドル
+            // 2. アイドリング（アニメーション3）をループ再生
             let startAnim = actions['Motion 0'] || Object.values(actions)[0];
-            if (specialAction) {
-                startAnim = specialAction;
-                // 強制的にループ設定 (後で戻す)
-                startAnim.setLoop(THREE.LoopRepeat);
+            if (idlingAction) {
+                startAnim = idlingAction;
             }
             startAnim.play();
             activeAction = startAnim;
@@ -427,6 +431,9 @@
             // 0.5秒表示
             await new Promise(r => setTimeout(r, 500));
             pop.style.display = 'none';
+
+            // ★追加: 0.5秒待機
+            await new Promise(r => setTimeout(r, 500));
 
             // 5. 走行開始 (Z=-12 -> Z=-2)
             debugLog("Opening: Running...");
@@ -449,16 +456,13 @@
 
             isMoving = false;
 
-            // 6. アイドルに戻す
+            // ★修正: アニメーションを一度全停止して、確実に立ちポーズへ移行
+            mixer.stopAllAction();
             const idle = actions['Motion 0'] || Object.values(actions)[0];
-            await fadeTo(idle, 0.3);
+            idle.reset().play();
+            activeAction = idle;
 
-            // ★SpecialActionのループ設定を元に戻す (通常ゲームプレイ用)
-            if (specialAction) {
-                specialAction.setLoop(THREE.LoopOnce); 
-            }
-
-            // 7. カメラをプレイ視点へ移行
+            // 6. カメラをプレイ視点へ移行
             debugLog("Ready!");
             const startCamPos = camera.position.clone();
             const endCamPos = DEFAULT_CAM_POS.clone();
@@ -549,7 +553,7 @@
 
             const intersectsModel = raycaster.intersectObject(model, true);
             if (intersectsModel.length > 0) {
-                playSpecialAction("Tap on Model");
+                playIdlingAction("Tap on Model");
                 return;
             }
 
@@ -574,13 +578,14 @@
         function resetIdleTimer() {
             if (isOpening) return;
             if (idleTimer) clearTimeout(idleTimer);
-            idleTimer = setTimeout(() => playSpecialAction("Idle Timeout"), 30000); 
+            idleTimer = setTimeout(() => playIdlingAction("Idle Timeout"), 30000); 
         }
 
-        async function playSpecialAction(source) {
-            if (isProcessing || isMoving || !specialAction) return;
-            debugLog(`Action: ${source}`);
-            await fadeTo(specialAction, 0.5);
+        async function playIdlingAction(source) {
+            if (isProcessing || isMoving || !idlingAction) return;
+            debugLog(`Idling: ${source}`);
+            // ループ設定はロード時に完了しているため、そのままフェードイン
+            await fadeTo(idlingAction, 0.5);
         }
 
         async function startNavigation(targetPos, boost) {
