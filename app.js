@@ -75,16 +75,17 @@ ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
 
-// --- Core Logic Variables ---
+// --- Core Variables ---
 let mixer, model, blobShadow, flag;
 let actions = {}; 
 let activeAction = null; 
 
-// Animation References
-let animIdle = null; // Index 0
-let animRun = null;  // Index 1
-let animLoop = null; // Index 2 (Loop)
-let animOnce = null; // Index 3 (Once)
+// ★重要: アニメーション役割定義
+let animRun = null;   // Index 0: 走行
+// Index 1: ジャンプ (今回は未使用)
+let animLoop = null;  // Index 2: アニメーション3 (ループ再生用)
+let animOnce = null;  // Index 3: アニメーション4 (ワンショット用)
+let animIdle = null;  // Index 4: アニメーション5 (Null/待機用)
 
 let idleTimer = null;
 let isProcessing = false, isMoving = false, isBoostMode = false, isOpening = true, isDragging = false;
@@ -130,30 +131,35 @@ new GLTFLoader().load('./model.glb', (gltf) => {
     mixer = new THREE.AnimationMixer(model);
     const actionList = [];
     
+    // 全アニメーションを配列化
     gltf.animations.forEach((clip, i) => { 
         const action = mixer.clipAction(clip);
         actions[clip.name || `Motion${i}`] = action;
         actionList.push(action);
-        console.log(`Anim[${i}]: ${clip.name}`); // デバッグ用: コンソールにアニメーション名を表示
+        // デバッグ: どのアニメーションが何番目かログ出力
+        console.log(`Index[${i}]: ${clip.name}`);
     });
     
-    // --- アニメーション割り当て ---
-    // 基本的に Index 0=待機, 1=走行, 2=ループアクション, 3=単発アクション と仮定
+    // --- ★アニメーション割り当て (Index指定) ---
+    // もし順序がズレている場合は、ここの数字を書き換えてください
     
-    animIdle = actionList[0]; 
-    
-    // 走行: 名前で探すか、なければ Index 1 を使う（0にフォールバックしない）
-    animRun = actions['走行'] || actions['Run'] || actionList[1] || actionList[0];
-    
+    if (actionList.length > 0) animRun = actionList[0]; // 走行
     if (actionList.length > 2) {
-        animLoop = actionList[2];
+        animLoop = actionList[2]; // アニメ3
         animLoop.setLoop(THREE.LoopRepeat);
     }
-    
     if (actionList.length > 3) {
-        animOnce = actionList[3];
+        animOnce = actionList[3]; // アニメ4
         animOnce.setLoop(THREE.LoopOnce);
         animOnce.clampWhenFinished = true;
+    }
+    if (actionList.length > 4) {
+        animIdle = actionList[4]; // アニメ5 (待機/Null)
+        animIdle.setLoop(THREE.LoopRepeat);
+    } else {
+        // アニメ5がない場合のフォールバック（アニメ3や0を使うなど）
+        console.warn("Animation 5 not found! Fallback to 0.");
+        animIdle = actionList[0];
     }
 
     runOpeningSequence();
@@ -170,8 +176,8 @@ async function runOpeningSequence() {
     controls.target.set(0, 0.8, -12); 
     controls.update();
     
-    // リロード時: アニメーション3を実行 (ループ)
-    const startAnim = animLoop || animIdle;
+    // ★リロード時: アニメーション3 (Index 2) を実行
+    const startAnim = animLoop || animRun;
     startAnim.reset().play(); 
     activeAction = startAnim;
     
@@ -183,7 +189,7 @@ async function runOpeningSequence() {
     pop.style.display = 'block'; updateEmotePosition();
     await new Promise(r => setTimeout(r, 1000)); pop.style.display = 'none';
     
-    // 走行
+    // 走行開始
     await fadeTo(animRun, 0.2); 
     isMoving = true;
     while (model.position.z < -2.0) { 
@@ -194,12 +200,10 @@ async function runOpeningSequence() {
     }
     isMoving = false;
     
-    // 停止: アニメーションを全停止してアイドルへ
-    mixer.stopAllAction();
-    animIdle.reset().play();
-    activeAction = animIdle;
+    // ★終了後: アニメーション5 (Index 4) へ遷移
+    await fadeTo(animIdle, 0.3);
 
-    // カメラ位置はそのまま、ターゲットのみ更新
+    // カメラ注視点更新
     controls.target.set(0, 0.5, -2); 
     controls.update();
 
@@ -209,7 +213,7 @@ async function runOpeningSequence() {
     debugLog("Ready.");
 }
 
-// 2. 待機タイマー処理 (30秒後 -> アニメ3)
+// 2. 待機タイマー (30秒後 -> アニメ3)
 function resetIdleTimer() { 
     if (idleTimer) clearTimeout(idleTimer); 
     idleTimer = setTimeout(() => playLoopAction("Idle Timeout"), 30000); 
@@ -222,32 +226,30 @@ async function playLoopAction(src) {
     await fadeTo(animLoop, 0.5); 
 }
 
-// アニメ4実行 (1回のみ)
+// アニメ4実行 (1回のみ) -> 終了後 アニメ5
 async function playOnceAction() {
     if (isProcessing || isMoving || !animOnce) return;
     debugLog("Action4: OneShot");
     isProcessing = true;
     resetIdleTimer();
 
-    // 念のためループ設定を再適用
     animOnce.setLoop(THREE.LoopOnce);
     animOnce.clampWhenFinished = true;
 
     await fadeTo(animOnce, 0.2);
     
-    // 終了待ち
+    // アニメーション時間分待機
     const duration = animOnce.getClip().duration;
     await new Promise(r => setTimeout(r, duration * 1000));
     
-    // 終了後、アイドルへ戻る
-    await new Promise(r => setTimeout(r, 500));
+    // ★終了後: アニメ5 (待機) へ戻る
     await fadeTo(animIdle, 0.5);
     
     isProcessing = false;
     resetIdleTimer();
 }
 
-// 5. 移動処理
+// 5. 移動処理 -> 終了後 アニメ5
 async function startNavigation(targetPos, boost) {
     isProcessing = true; isBoostMode = boost;
     flag.position.copy(targetPos); flag.children[1].material.color.set(isBoostMode ? 0xffd700 : 0xff4757); flag.visible = true;
@@ -272,15 +274,14 @@ async function startNavigation(targetPos, boost) {
     const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
     await turnTowards(Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z), true);
     
-    // ★移動完了後の停止処理
-    // 走行アニメが残らないよう、Idleへ遷移
+    // ★終了後: アニメ5 (待機) へ遷移
     await fadeTo(animIdle, 0.5);
     
     isProcessing = false; resetIdleTimer();
     debugLog("Ready.");
 }
 
-// --- Animation Control Helper ---
+// --- Animation Helper ---
 async function fadeTo(next, dur) {
     if (!next || activeAction === next) return;
     if (activeAction) activeAction.fadeOut(dur);
@@ -298,15 +299,20 @@ async function turnTowards(targetAngle, isStepping) {
             model.rotation.y += Math.sign(diff) * 0.08; await new Promise(r => requestAnimationFrame(r));
         }
     } else {
+        // ジャンプなしでその場で回転 (アニメ5のまま回る)
         let diff = targetAngle - model.rotation.y;
         while (diff > Math.PI) diff -= Math.PI * 2; while (diff < -Math.PI) diff += Math.PI * 2;
-        if (Math.abs(diff) > 0.3) {
-            // ジャンプ回転 (アニメ1があれば使う)
-            const jump = actions['垂直ジャンプ'] || Object.values(actions)[1] || animIdle;
-            await fadeTo(jump, 0.1);
-            const startRot = model.rotation.y;
-            for (let i = 0; i <= 30; i++) { model.rotation.y = startRot + (diff * (i/30)); await new Promise(r => requestAnimationFrame(r)); }
-        } else { model.rotation.y = targetAngle; }
+        // 回転が速すぎると違和感がある場合はここで補間アニメーションを入れる
+        // 今回はシンプルに値を代入
+        if (Math.abs(diff) > 0.1) {
+             const startRot = model.rotation.y;
+             for (let i = 0; i <= 20; i++) { 
+                 model.rotation.y = startRot + (diff * (i/20)); 
+                 await new Promise(r => requestAnimationFrame(r)); 
+             }
+        } else {
+            model.rotation.y = targetAngle;
+        }
     }
 }
 
