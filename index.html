@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Mitsuhashi-kun V1.2.0 - Intro Dash</title>
+    <title>Mitsuhashi-kun V1.2.0 - Intro Dash (Fixed)</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #87CEEB; font-family: 'Segoe UI', sans-serif; }
+        body { margin: 0; overflow: hidden; background-color: #f0f8ff; font-family: 'Segoe UI', sans-serif; }
         
-        /* UI: ログエリア */
+        /* UI: ログエリア (V1.1.0準拠) */
         #log-container {
             position: absolute;
             top: 10px;
@@ -20,14 +20,15 @@
             font-size: 12px;
             pointer-events: none;
             user-select: none;
+            z-index: 10;
         }
 
-        /* UI: 操作説明モーダル */
+        /* UI: 操作説明モーダル (V1.1.0準拠) */
         #help-modal {
             position: absolute;
             bottom: 20px;
             right: 20px;
-            background: rgba(0, 0, 0, 0.8);
+            background: rgba(0, 0, 0, 0.6);
             color: white;
             padding: 15px;
             border-radius: 8px;
@@ -35,11 +36,12 @@
             max-width: 250px;
             font-size: 13px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            z-index: 10;
         }
-        h3 { margin: 0 0 8px 0; color: #ffeb3b; border-bottom: 1px solid #555; padding-bottom: 5px; }
+        h3 { margin: 0 0 8px 0; color: #ffd700; border-bottom: 1px solid #555; padding-bottom: 5px; }
         ul { padding-left: 20px; margin: 0; }
         li { margin-bottom: 4px; }
-        .highlight { color: #ffeb3b; font-weight: bold; }
+        .highlight { color: #ffd700; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -47,15 +49,15 @@
     <div id="log-container">
         <div><strong>MITSUHASHI_SYS_LOG v1.2.0</strong></div>
         <div id="status">Status: IDLE</div>
-        <div id="coords">Pos: (0, 0)</div>
+        <div id="coords">Pos: (0.0, 0.0)</div>
     </div>
 
     <div id="help-modal">
-        <h3>Controls</h3>
+        <h3>Mitsuhashi Controls</h3>
         <ul>
-            <li><span class="highlight">Auto Intro:</span> リロードで爆走登場</li>
-            <li><span class="highlight">1 Tap:</span> その場所へトコトコ歩行</li>
-            <li><span class="highlight">2 Taps:</span> BOOST (煙+バック走行)</li>
+            <li><span class="highlight">Start:</span> ダッシュで登場</li>
+            <li><span class="highlight">1 Tap:</span> トコトコ移動</li>
+            <li><span class="highlight">2 Taps:</span> BOOST (急加速+バック)</li>
         </ul>
     </div>
 
@@ -70,28 +72,30 @@
     <script type="module">
         import * as THREE from 'three';
 
-        // --- Configuration ---
+        // --- Configuration (V1.1.0 Base) ---
         const SETTINGS = {
-            moveSpeed: 0.15,
-            boostSpeed: 0.4,
-            introSpeed: 0.8,      // 登場時の爆走スピード
+            moveSpeed: 0.1,
+            boostSpeed: 0.3,
+            introSpeed: 0.6,      // 登場時の速度
             colors: {
-                body: 0xffd700,   // ミツハシ・イエロー
-                eye: 0x333333,
-                blush: 0xffaaaa,
-                boost: 0xff4500
+                body: 0xffd700,   // ミツハシイエロー
+                eye: 0x111111,
+                cheek: 0xffa07a,
+                limb: 0xffcc00    // 手足の色
             }
         };
 
         // --- Global Variables ---
         let scene, camera, renderer;
-        let mitsuhashi; // The Character Group
+        let mitsuhashi; 
         let targetPosition = new THREE.Vector3();
         let isMoving = false;
         let isBoosting = false;
-        let isIntro = true; // イントロモードフラグ
+        
+        // V1.2.0 New Flag
+        let isIntro = true; 
 
-        // Raycaster & Input
+        // Raycaster
         const raycaster = new THREE.Raycaster();
         const pointer = new THREE.Vector2();
         let lastTapTime = 0;
@@ -99,7 +103,7 @@
         // Effects
         const particles = [];
 
-        // UI Elements
+        // UI
         const elStatus = document.getElementById('status');
         const elCoords = document.getElementById('coords');
 
@@ -107,53 +111,50 @@
         animate();
 
         function init() {
-            // 1. Scene Setup
+            // 1. Scene
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0xa0d8ef); // 空色
-            scene.fog = new THREE.Fog(0xa0d8ef, 20, 100); // 遠近感の強調
+            scene.background = new THREE.Color(0xf0f8ff); // AliceBlue
+            scene.fog = new THREE.Fog(0xf0f8ff, 20, 80);
 
-            // 床 (Grid)
-            const gridHelper = new THREE.GridHelper(200, 50, 0xffffff, 0x555555);
-            gridHelper.position.y = -0.1;
-            scene.add(gridHelper);
+            // 2. Camera
+            camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+            // カメラ位置：少し引き気味で、正面からの登場が見える位置
+            camera.position.set(0, 10, 20); 
+            camera.lookAt(0, 0, 0);
 
-            const floorGeo = new THREE.PlaneGeometry(200, 200);
-            const floorMat = new THREE.MeshBasicMaterial({ color: 0x87CEEB, visible: false }); // Raycast用に見えない床を配置
-            const floor = new THREE.Mesh(floorGeo, floorMat);
+            // 3. Light
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+            scene.add(ambientLight);
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+            dirLight.position.set(10, 20, 10);
+            dirLight.castShadow = true;
+            scene.add(dirLight);
+
+            // 4. Ground (Invisible for Raycasting)
+            // グリッド等は排除し、純粋なRaycast用のみ配置
+            const planeGeo = new THREE.PlaneGeometry(500, 500);
+            const planeMat = new THREE.MeshBasicMaterial({ visible: false }); 
+            const floor = new THREE.Mesh(planeGeo, planeMat);
             floor.rotation.x = -Math.PI / 2;
             floor.name = "floor";
             scene.add(floor);
 
-            // 2. Camera Setup (Adjusted for V1.2.0)
-            // 少し高い位置から見下ろすが、奥が見える角度に調整
-            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 12, 18); 
-            camera.lookAt(0, 0, 0);
-
-            // 3. Lighting
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
-            scene.add(ambientLight);
-            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            dirLight.position.set(10, 20, 10);
-            scene.add(dirLight);
-
-            // 4. Create Mitsuhashi-kun
+            // 5. Character (Restoring Mitsuhashi Design)
             createMitsuhashi();
 
-            // 5. Intro Setup (V1.2.0 Feature)
-            // 遥か彼方(Z = -80)からスタート
-            mitsuhashi.position.set(0, 0, -80);
-            // ターゲットは原点
-            targetPosition.set(0, 0, 0);
-            elStatus.textContent = "Status: INTRO DASH!!";
-
+            // --- V1.2.0 Intro Setup ---
+            // 画面奥(-60)からスタート
+            mitsuhashi.position.set(0, 0, -60);
+            targetPosition.set(0, 0, 0); // 目標は原点
+            
             // 6. Renderer
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true;
             document.body.appendChild(renderer.domElement);
 
-            // 7. Event Listeners
+            // 7. Events
             window.addEventListener('resize', onWindowResize);
             window.addEventListener('pointerdown', onPointerDown);
         }
@@ -161,119 +162,124 @@
         function createMitsuhashi() {
             mitsuhashi = new THREE.Group();
 
-            // Body (Sphere) - まんまるボディ
+            // Body (丸いフォルム)
             const bodyGeo = new THREE.SphereGeometry(1, 32, 32);
-            const bodyMat = new THREE.MeshStandardMaterial({ color: SETTINGS.colors.body, roughness: 0.4 });
+            const bodyMat = new THREE.MeshStandardMaterial({ color: SETTINGS.colors.body });
             const body = new THREE.Mesh(bodyGeo, bodyMat);
             body.position.y = 1;
             body.castShadow = true;
             mitsuhashi.add(body);
 
-            // Eyes (Simple Spheres)
-            const eyeGeo = new THREE.SphereGeometry(0.15, 16, 16);
+            // Eyes
+            const eyeGeo = new THREE.SphereGeometry(0.12, 16, 16);
             const eyeMat = new THREE.MeshBasicMaterial({ color: SETTINGS.colors.eye });
             
             const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
-            leftEye.position.set(-0.3, 1.3, 0.85);
+            leftEye.position.set(-0.35, 1.2, 0.85);
             mitsuhashi.add(leftEye);
 
             const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
-            rightEye.position.set(0.3, 1.3, 0.85);
+            rightEye.position.set(0.35, 1.2, 0.85);
             mitsuhashi.add(rightEye);
 
-            // Cheeks (Blush) - 可愛さポイント
-            const cheekGeo = new THREE.CircleGeometry(0.2, 16);
-            const cheekMat = new THREE.MeshBasicMaterial({ color: SETTINGS.colors.blush, transparent: true, opacity: 0.6 });
+            // Cheeks
+            const cheekGeo = new THREE.CircleGeometry(0.15, 16);
+            const cheekMat = new THREE.MeshBasicMaterial({ color: SETTINGS.colors.cheek });
             
             const leftCheek = new THREE.Mesh(cheekGeo, cheekMat);
-            leftCheek.position.set(-0.6, 1.1, 0.75);
+            leftCheek.position.set(-0.6, 1.1, 0.8);
             leftCheek.rotation.y = -0.5;
             mitsuhashi.add(leftCheek);
 
             const rightCheek = new THREE.Mesh(cheekGeo, cheekMat);
-            rightCheek.position.set(0.6, 1.1, 0.75);
+            rightCheek.position.set(0.6, 1.1, 0.8);
             rightCheek.rotation.y = 0.5;
             mitsuhashi.add(rightCheek);
 
-            // Shadow (Simple Circle on floor)
+            // Limbs (Short Hands/Feet to complete the look)
+            const limbGeo = new THREE.SphereGeometry(0.25, 16, 16);
+            const limbMat = new THREE.MeshStandardMaterial({ color: SETTINGS.colors.limb });
+
+            // Feet
+            const leftFoot = new THREE.Mesh(limbGeo, limbMat);
+            leftFoot.position.set(-0.4, 0.2, 0); // 体の下に隠れるように
+            leftFoot.scale.set(1, 0.6, 1.5);
+            mitsuhashi.add(leftFoot);
+
+            const rightFoot = new THREE.Mesh(limbGeo, limbMat);
+            rightFoot.position.set(0.4, 0.2, 0);
+            rightFoot.scale.set(1, 0.6, 1.5);
+            mitsuhashi.add(rightFoot);
+
+            // Hands (Tiny, side)
+            const leftHand = new THREE.Mesh(limbGeo, limbMat);
+            leftHand.position.set(-0.9, 0.8, 0);
+            mitsuhashi.add(leftHand);
+
+            const rightHand = new THREE.Mesh(limbGeo, limbMat);
+            rightHand.position.set(0.9, 0.8, 0);
+            mitsuhashi.add(rightHand);
+
+            // Shadow
             const shadowGeo = new THREE.CircleGeometry(0.8, 32);
-            const shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3 });
+            const shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.2 });
             const shadow = new THREE.Mesh(shadowGeo, shadowMat);
             shadow.rotation.x = -Math.PI / 2;
-            shadow.position.y = 0.05;
+            shadow.position.y = 0.02;
             mitsuhashi.add(shadow);
 
             scene.add(mitsuhashi);
         }
 
-        // --- Core Logic ---
-
         function onPointerDown(event) {
-            // イントロ中は操作無効
+            // イントロ中は操作させない
             if (isIntro) return;
 
             event.preventDefault();
-
-            // 座標取得
+            
             pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
             pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
             raycaster.setFromCamera(pointer, camera);
             const intersects = raycaster.intersectObjects(scene.children);
-
             const floorHit = intersects.find(hit => hit.object.name === "floor");
 
             if (floorHit) {
-                const currentTime = Date.now();
-                const timeDiff = currentTime - lastTapTime;
+                const now = Date.now();
+                if (now - lastTapTime < 300) {
+                    // Double Tap
+                    isBoosting = true;
+                    isMoving = true;
+                    
+                    // オーバーラン計算
+                    const dir = new THREE.Vector3().subVectors(floorHit.point, mitsuhashi.position).normalize();
+                    targetPosition.copy(floorHit.point).add(dir.multiplyScalar(4)); // 4m行き過ぎる
 
-                // Double Tap Detection (300ms以内)
-                if (timeDiff < 300) {
-                    triggerBoost(floorHit.point);
+                    elStatus.textContent = "Status: BOOST!!";
                 } else {
-                    triggerWalk(floorHit.point);
+                    // Single Tap
+                    isBoosting = false;
+                    isMoving = true;
+                    targetPosition.copy(floorHit.point);
+                    elStatus.textContent = "Status: WALKING";
                 }
-                lastTapTime = currentTime;
+                lastTapTime = now;
             }
         }
 
-        function triggerWalk(point) {
-            isBoosting = false;
-            isMoving = true;
-            targetPosition.copy(point);
-            elStatus.textContent = "Status: WALKING";
-        }
-
-        function triggerBoost(point) {
-            isBoosting = true;
-            isMoving = true;
-            
-            // オーバーラン（行き過ぎる）させるため、ベクトルを延長
-            const direction = new THREE.Vector3().subVectors(point, mitsuhashi.position).normalize();
-            // 目標地点よりさらに5ユニット奥へ設定
-            targetPosition.copy(point).add(direction.multiplyScalar(5));
-            
-            elStatus.textContent = "Status: BOOST!!";
-        }
-
-        function spawnParticle() {
-            // シンプルな四角形で煙を表現
-            const geo = new THREE.PlaneGeometry(0.5, 0.5);
+        function spawnSmoke() {
+            const geo = new THREE.CircleGeometry(0.3, 8);
             const mat = new THREE.MeshBasicMaterial({ 
-                color: isBoosting ? 0xffffff : 0xcccccc, 
+                color: 0xffffff, 
                 transparent: true, 
-                opacity: 0.6,
-                side: THREE.DoubleSide
+                opacity: 0.5, 
+                side: THREE.DoubleSide 
             });
             const mesh = new THREE.Mesh(geo, mat);
             
-            // ミツハシくんの足元から発生
             mesh.position.copy(mitsuhashi.position);
-            mesh.position.y = 0.5;
-            mesh.position.x += (Math.random() - 0.5) * 1.0; // 少し散らす
-
-            // 常にカメラの方を向く（ビルボード）
-            mesh.lookAt(camera.position);
+            mesh.position.y = 0.2;
+            mesh.lookAt(camera.position); // ビルボード処理
 
             scene.add(mesh);
             particles.push({ mesh, life: 1.0 });
@@ -282,11 +288,11 @@
         function updateParticles() {
             for (let i = particles.length - 1; i >= 0; i--) {
                 const p = particles[i];
-                p.life -= 0.05; // 寿命を減らす
-                p.mesh.position.y += 0.05; // 上昇
-                p.mesh.scale.multiplyScalar(0.9); // 縮小
+                p.life -= 0.05;
+                p.mesh.position.y += 0.05;
+                p.mesh.scale.multiplyScalar(0.95);
                 p.mesh.material.opacity = p.life;
-
+                
                 if (p.life <= 0) {
                     scene.remove(p.mesh);
                     particles.splice(i, 1);
@@ -303,88 +309,57 @@
         function animate() {
             requestAnimationFrame(animate);
 
-            // --- Intro Animation Logic ---
+            // --- Intro Sequence ---
             if (isIntro) {
-                // 1. Z軸方向へ猛ダッシュ
-                const dist = mitsuhashi.position.distanceTo(targetPosition);
+                // 原点(0,0,0)に向かって走る
+                const dist = mitsuhashi.position.distanceTo(new THREE.Vector3(0,0,0));
                 
-                // 向かう方向を向く
-                mitsuhashi.lookAt(targetPosition.x, mitsuhashi.position.y, targetPosition.z);
-
                 if (dist > 1.0) {
-                    // 線形移動（高速）
-                    const dir = new THREE.Vector3().subVectors(targetPosition, mitsuhashi.position).normalize();
-                    mitsuhashi.position.add(dir.multiplyScalar(SETTINGS.introSpeed));
+                    // 移動
+                    mitsuhashi.position.z += SETTINGS.introSpeed;
                     
-                    // 必死に走るWobbleアニメーション
-                    // Math.sinを使って体を左右に揺らす (周波数を高くして焦りを表現)
-                    mitsuhashi.rotation.z = Math.sin(Date.now() * 0.02) * 0.2;
-                    mitsuhashi.position.y = 1 + Math.abs(Math.sin(Date.now() * 0.02)) * 0.3; // ピョコピョコ跳ねる
-
-                    // 煙エフェクト発生
-                    if (Math.random() > 0.5) spawnParticle();
-                } else {
-                    // 到着！急ブレーキ演出
-                    isIntro = false;
-                    elStatus.textContent = "Status: IDLE (Ready)";
+                    // 必死に走るアニメーション (左右の揺れを大きく)
+                    mitsuhashi.rotation.z = Math.sin(Date.now() * 0.02) * 0.15;
+                    mitsuhashi.position.y = 1 + Math.abs(Math.sin(Date.now() * 0.02)) * 0.3;
                     
-                    // 姿勢をリセット
-                    mitsuhashi.rotation.z = 0;
-                    mitsuhashi.position.y = 1;
+                    // 煙
+                    if(Math.random() > 0.7) spawnSmoke();
 
-                    // 急停止の反動（簡易表現：位置を少し戻す的な演出は複雑になるので、ここでは「おっとっと」とY軸回転を入れる）
-                    // 実際のアニメーションフレームで減衰振動させるのが理想だが、今回はシンプルに
-                    // 「到着」としてフラグを下ろすのみとし、ユーザー操作へ移譲。
-                }
-
-                updateParticles();
-                renderer.render(scene, camera);
-                return; // イントロ中は以下の通常ロジックをスキップ
-            }
-
-            // --- Normal Gameplay Logic ---
-
-            if (isMoving) {
-                const dist = mitsuhashi.position.distanceTo(targetPosition);
-                const stopThreshold = isBoosting ? 0.5 : 0.1;
-
-                if (dist > stopThreshold) {
-                    // 現在位置からターゲットへのベクトル
-                    const direction = new THREE.Vector3().subVectors(targetPosition, mitsuhashi.position).normalize();
-                    
-                    // スピード決定
-                    const speed = isBoosting ? SETTINGS.boostSpeed : SETTINGS.moveSpeed;
-                    
-                    // 位置更新
-                    mitsuhashi.position.add(direction.multiplyScalar(speed));
-                    
-                    // 回転（進行方向を向く）
-                    // atan2を使ってスムーズに向きを変えることも可能だが、lookAtが一番軽量で確実
-                    mitsuhashi.lookAt(targetPosition.x, mitsuhashi.position.y, targetPosition.z);
-
-                    // 歩行・走行アニメーション (Jump/Wobble)
-                    const bounceFreq = isBoosting ? 0.03 : 0.01;
-                    const bounceHeight = isBoosting ? 0.5 : 0.2;
-                    mitsuhashi.position.y = 1 + Math.abs(Math.sin(Date.now() * bounceFreq)) * bounceHeight;
-
-                    // ブースト時は煙を出す
-                    if (isBoosting) spawnParticle();
-
+                    elStatus.textContent = "Status: INTRO DASH";
                 } else {
                     // 到着
+                    isIntro = false;
+                    mitsuhashi.position.set(0, 1, 0);
+                    mitsuhashi.rotation.set(0, 0, 0);
+                    elStatus.textContent = "Status: READY";
+                }
+            } 
+            // --- Normal Logic ---
+            else if (isMoving) {
+                const dist = mitsuhashi.position.distanceTo(targetPosition);
+                const threshold = isBoosting ? 0.5 : 0.1;
+
+                if (dist > threshold) {
+                    const dir = new THREE.Vector3().subVectors(targetPosition, mitsuhashi.position).normalize();
+                    const spd = isBoosting ? SETTINGS.boostSpeed : SETTINGS.moveSpeed;
+
+                    mitsuhashi.position.add(dir.multiplyScalar(spd));
+                    mitsuhashi.lookAt(targetPosition.x, 1, targetPosition.z);
+
+                    // 跳ねるアニメーション
+                    const freq = isBoosting ? 0.03 : 0.015;
+                    mitsuhashi.position.y = 1 + Math.abs(Math.sin(Date.now() * freq)) * 0.3;
+
+                    if (isBoosting) spawnSmoke();
+                } else {
                     isMoving = false;
                     isBoosting = false;
-                    mitsuhashi.position.y = 1; // 地面に着地
+                    mitsuhashi.position.y = 1;
                     elStatus.textContent = "Status: IDLE";
-                    
-                    // ダブルタップBOOST時の「行き過ぎて戻る」処理を入れるならここだが、
-                    // 今回はシンプルに停止
                 }
             }
 
             updateParticles();
-
-            // UI更新
             elCoords.textContent = `Pos: (${mitsuhashi.position.x.toFixed(1)}, ${mitsuhashi.position.z.toFixed(1)})`;
 
             renderer.render(scene, camera);
