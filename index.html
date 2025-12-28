@@ -104,6 +104,31 @@
             50% { transform: scale(1.2) translateY(-10px); opacity: 1; }
             100% { transform: scale(1) translateY(0); opacity: 1; }
         }
+
+        /* --- アクションメニュー（サッカーボール用） --- */
+        #action-menu {
+            display: none;
+            position: absolute;
+            /* モデルの近くに出すためJSで制御 */
+            background: white;
+            padding: 5px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            z-index: 1500;
+            animation: fadeIn 0.2s ease-out;
+        }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        .action-item {
+            padding: 10px 20px;
+            background: #3498db;
+            color: white;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            text-align: center;
+            white-space: nowrap;
+        }
+        .action-item:active { background: #2980b9; }
     </style>
 </head>
 <body>
@@ -111,6 +136,10 @@
     <div id="help-btn" class="ui-panel" onclick="openHelpMenu()">操作説明</div>
     
     <div id="emote-pop">！</div>
+
+    <div id="action-menu">
+        <div class="action-item" onclick="onSoccerBallSelect()">サッカーボール</div>
+    </div>
 
     <div id="help-modal" class="modal-overlay">
         <div class="modal-card">
@@ -131,7 +160,6 @@
 
     <div id="debug-panel">
         <div class="debug-title">DEBUG MENU</div>
-        
         <div class="debug-section">
             <div class="debug-label">INITIALIZE</div>
             <div class="debug-row">
@@ -139,18 +167,14 @@
                 <button class="debug-btn" onclick="resetModel()">Reset Model</button>
             </div>
         </div>
-
         <div class="debug-section">
             <div class="debug-label">PARAMETERS</div>
             <label>Walk Speed: <span id="val-walk">0.06</span></label>
             <input type="range" min="0.01" max="0.2" step="0.01" value="0.06" oninput="updateParam('walk', this.value)">
-            
             <div style="height:10px"></div>
-
             <label>Dash Speed: <span id="val-dash">0.12</span></label>
             <input type="range" min="0.05" max="0.4" step="0.01" value="0.12" oninput="updateParam('dash', this.value)">
         </div>
-
         <button class="btn btn-close" style="width:100%" onclick="closeDebug()">CLOSE</button>
     </div>
 
@@ -164,17 +188,14 @@
     </script>
     
     <script>
-        // --- 設定パラメータ ---
-        window.params = {
-            walkSpeed: 0.06,
-            dashSpeed: 0.12
-        };
+        window.params = { walkSpeed: 0.06, dashSpeed: 0.12 };
 
         // --- UI / ヘルプ制御 ---
         const helpContent = [
             { title: "歩いて移動", icon: "👆", desc: "地面を【1回タップ】" },
             { title: "ダッシュ移動", icon: "👆👆", desc: "地面を【2回連打】" },
-            { title: "アイドリング", icon: "🤫", desc: "ミツハシくんをタップ、または放置" },
+            { title: "アイドリング", icon: "🤫", desc: "ミツハシくんを放置すると開始" },
+            { title: "アイテムメニュー", icon: "🎒", desc: "ミツハシくんを【ダブルタップ】" },
             { title: "デバッグモード", icon: "🔧", desc: "画面のどこかを【3回連打】" }
         ];
 
@@ -209,7 +230,7 @@
             });
         };
 
-        // --- デバッグ制御 ---
+        // デバッグ
         window.isDebugOpen = false;
         window.openDebug = function() {
             if (window.isModalOpen) return;
@@ -222,14 +243,16 @@
         };
         window.updateParam = function(key, val) {
             const num = parseFloat(val);
-            if (key === 'walk') {
-                window.params.walkSpeed = num;
-                document.getElementById('val-walk').innerText = num.toFixed(2);
-            } else if (key === 'dash') {
-                window.params.dashSpeed = num;
-                document.getElementById('val-dash').innerText = num.toFixed(2);
-            }
+            if (key === 'walk') { window.params.walkSpeed = num; document.getElementById('val-walk').innerText = num.toFixed(2); }
+            else if (key === 'dash') { window.params.dashSpeed = num; document.getElementById('val-dash').innerText = num.toFixed(2); }
         };
+
+        // --- アクションメニュー制御 ---
+        window.closeActionMenu = function() {
+            document.getElementById('action-menu').style.display = 'none';
+        }
+        // グローバル関数として定義（HTMLから呼ぶため）
+        window.onSoccerBallSelect = null; 
     </script>
 
     <script type="module">
@@ -245,11 +268,7 @@
         scene.fog = new THREE.Fog(0xe0e0e0, 10, 50);
 
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-        
-        // 通常時のカメラ位置
         const DEFAULT_CAM_POS = new THREE.Vector3(0, 6, 12);
-        
-        // オープニング時の初期設定はロード完了後に適用
         camera.position.set(0, 5, 10); 
 
         const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -264,7 +283,6 @@
         dirLight.castShadow = true;
         scene.add(dirLight);
 
-        // フィールド
         const ground = new THREE.Mesh(
             new THREE.CircleGeometry(15, 64),
             new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.4, side: THREE.DoubleSide })
@@ -277,10 +295,13 @@
         let actions = {}; 
         let activeAction = null; 
         
-        // ★名称変更: idlingAction
         let idlingAction = null;
+        let ballAction = null; // サッカーボール取り出しアクション
         let idleTimer = null;
         
+        let soccerBallModel = null;
+        let rightHandBone = null;
+
         let isProcessing = false; 
         let isMoving = false;     
         let isBoostMode = false;     
@@ -293,6 +314,10 @@
         let tapResetTimer = null;
         let pointerDownPos = new THREE.Vector2();
         let isDragging = false;
+        
+        // モデルダブルクリック用
+        let modelTapCount = 0;
+        let modelTapTimer = null;
 
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
@@ -300,17 +325,14 @@
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         controls.maxPolarAngle = Math.PI / 2 - 0.1;
-        controls.enabled = false; // オープニング中は無効化
+        controls.enabled = false;
 
         // --- リセット関数 ---
         window.resetCamera = function() {
             if (isOpening) return;
             camera.position.copy(DEFAULT_CAM_POS);
-            if (model) {
-                controls.target.copy(model.position).setY(0.5);
-            } else {
-                controls.target.set(0, 0, 0);
-            }
+            if (model) controls.target.copy(model.position).setY(0.5);
+            else controls.target.set(0, 0, 0);
             controls.update();
             debugLog("Camera Reset.");
         };
@@ -320,15 +342,14 @@
             if (activeAction) activeAction.fadeOut(0.2);
             isMoving = false;
             isProcessing = false;
-            
             model.position.set(0, 0, 0);
             model.rotation.set(0, 0, 0);
-            
             const idle = actions['Motion 0'] || Object.values(actions)[0];
             if (idle) {
                 idle.reset().play();
                 activeAction = idle;
             }
+            if (soccerBallModel) soccerBallModel.visible = false; // ボールも隠す
             controls.target.set(0, 0.5, 0);
             debugLog("Model Reset.");
         };
@@ -378,32 +399,113 @@
         }
 
         // --- GLTFロード ---
-        new GLTFLoader().load('./model.glb', (gltf) => {
+        const loader = new GLTFLoader();
+        
+        loader.load('./model.glb', (gltf) => {
             model = gltf.scene;
-            model.traverse(c => { if(c.isMesh) c.castShadow = true; });
+            model.traverse(c => { 
+                if(c.isMesh) c.castShadow = true; 
+            });
             scene.add(model);
             
+            // ボーンを探して保持しておく（右手の骨）
+            // 一般的なMixamoリグの名前: 'mixamorigRightHand' or 'RightHand'
+            rightHandBone = model.getObjectByName('mixamorigRightHand') || model.getObjectByName('RightHand') || model.getObjectByName('Hand.R');
+            if (!rightHandBone) {
+                console.warn("Right hand bone not found! Logging all bone names:");
+                model.traverse(o => { if(o.isBone) console.log(o.name); });
+            }
+
             mixer = new THREE.AnimationMixer(model);
             gltf.animations.forEach((clip, i) => {
                 actions[clip.name || `Motion${i}`] = mixer.clipAction(clip);
             });
             
-            // ★アイドリングアクション取得
-            if (Object.values(actions).length > 2) {
-                idlingAction = Object.values(actions)[2];
-                // ★ループ設定（通常時もループさせる）
+            // アクション割り当て
+            const actionValues = Object.values(actions);
+            if (actionValues.length > 2) {
+                idlingAction = actionValues[2];
                 idlingAction.setLoop(THREE.LoopRepeat);
             }
+            if (actionValues.length > 3) {
+                ballAction = actionValues[3]; // 4番目のアニメーション
+                ballAction.setLoop(THREE.LoopOnce);
+                ballAction.clampWhenFinished = true;
+            }
             
-            // ★オープニングシーケンス開始
             runOpeningSequence();
         });
 
-        // --- ★オープニングシーケンス ---
+        // サッカーボールロード（選択時に呼ばれる）
+        function loadSoccerBall() {
+            if (soccerBallModel) return; // 既にロード済み
+            loader.load('./soccer_ball.glb', (gltf) => {
+                soccerBallModel = gltf.scene;
+                soccerBallModel.scale.set(0.2, 0.2, 0.2); // サイズ調整
+                soccerBallModel.traverse(c => { if(c.isMesh) c.castShadow = true; });
+                
+                // 初期状態は非表示
+                soccerBallModel.visible = false;
+
+                // 右手のボーンが見つかっていればアタッチ、なければシーンに追加
+                if (rightHandBone) {
+                    rightHandBone.add(soccerBallModel);
+                    // 手のひらに合うように位置調整（必要に応じて調整してください）
+                    soccerBallModel.position.set(0.1, 0.05, 0.05); 
+                } else {
+                    scene.add(soccerBallModel);
+                }
+            });
+        }
+
+        // --- サッカーボール選択時の処理 ---
+        window.onSoccerBallSelect = async function() {
+            window.closeActionMenu();
+            if (isProcessing || isMoving) return;
+            if (!ballAction) { debugLog("Animation 4 not found"); return; }
+            
+            isProcessing = true;
+            resetIdleTimer();
+            debugLog("Item: Soccer Ball");
+
+            // 1. サッカーボール読み込み（未ロードなら）
+            loadSoccerBall();
+
+            // 2. カメラのほうを向く（足踏み回転）
+            const camPos = new THREE.Vector3();
+            camera.getWorldPosition(camPos);
+            await turnTowards(Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z), true);
+
+            // 3. アニメーション再生
+            await fadeTo(ballAction, 0.3);
+
+            // 4. アニメーションに合わせてボールを表示させる演出
+            // ※本来はアニメーションイベントを使いますが、簡易的にタイマーで制御
+            if (soccerBallModel) {
+                soccerBallModel.visible = false;
+                // 例えば背中に手を回したタイミング(0.5秒後とか)で表示
+                setTimeout(() => {
+                    if (activeAction === ballAction) soccerBallModel.visible = true;
+                }, 800); 
+            }
+
+            // アニメーション終了待ち
+            await new Promise(r => setTimeout(r, ballAction.getClip().duration * 1000));
+            
+            // 終了後、少し待ってアイドリングへ戻る（ボールは持ったまま）
+            await new Promise(r => setTimeout(r, 1000));
+            
+            const idle = actions['Motion 0'] || Object.values(actions)[0];
+            await fadeTo(idle, 0.5);
+            
+            isProcessing = false;
+            resetIdleTimer();
+        };
+
+        // --- ★オープニングシーケンス（修正版） ---
         async function runOpeningSequence() {
             debugLog("Opening: Initializing...");
             
-            // 1. 初期配置
             model.position.set(0, 0, -12);
             model.rotation.set(0, 0, 0);
             
@@ -411,31 +513,29 @@
             controls.target.set(0, 0.8, -12);
             controls.update();
 
-            // 2. アイドリング（アニメーション3）をループ再生
+            // アイドリング（アニメ3）をループ再生
             let startAnim = actions['Motion 0'] || Object.values(actions)[0];
-            if (idlingAction) {
-                startAnim = idlingAction;
-            }
-            startAnim.play();
+            if (idlingAction) startAnim = idlingAction;
+            
+            startAnim.reset().play();
             activeAction = startAnim;
 
-            // 3. 2秒間待機（何もしない）
+            // 2秒待機
             debugLog("Opening: Wait 2s...");
             await new Promise(r => setTimeout(r, 2000));
 
-            // 4. 「！」ポップ表示
+            // 「！」表示
             const pop = document.getElementById('emote-pop');
             pop.style.display = 'block';
             updateEmotePosition(); 
             
-            // 0.5秒表示
             await new Promise(r => setTimeout(r, 500));
             pop.style.display = 'none';
 
-            // ★追加: 0.5秒待機
+            // ★追加：0.5秒待機
             await new Promise(r => setTimeout(r, 500));
 
-            // 5. 走行開始 (Z=-12 -> Z=-2)
+            // 走行開始
             debugLog("Opening: Running...");
             const run = actions['走行'] || Object.values(actions)[0];
             await fadeTo(run, 0.2);
@@ -456,13 +556,16 @@
 
             isMoving = false;
 
-            // ★修正: アニメーションを一度全停止して、確実に立ちポーズへ移行
-            mixer.stopAllAction();
+            // ★修正：確実に停止させる
+            // 現在のアクションを停止し、即座に通常待機モーションへ
+            if (activeAction) activeAction.stop();
             const idle = actions['Motion 0'] || Object.values(actions)[0];
             idle.reset().play();
             activeAction = idle;
+            
+            // 念のためミキサー全体の時間を進めて更新
+            mixer.update(0);
 
-            // 6. カメラをプレイ視点へ移行
             debugLog("Ready!");
             const startCamPos = camera.position.clone();
             const endCamPos = DEFAULT_CAM_POS.clone();
@@ -490,24 +593,19 @@
             if (!model) return;
             const pop = document.getElementById('emote-pop');
             if (pop.style.display === 'none') return;
-
-            // モデルの頭上左上あたりの座標を取得
             const headPos = model.position.clone().add(new THREE.Vector3(-0.3, 2.0, 0));
             headPos.project(camera);
-
             const x = (headPos.x * .5 + .5) * window.innerWidth;
             const y = (-(headPos.y * .5) + .5) * window.innerHeight;
-
             pop.style.left = `${x}px`;
             pop.style.top = `${y}px`;
         }
 
-
         // --- 入力イベント ---
-        
         window.addEventListener('pointerdown', (e) => {
-            if (isOpening) return; // ★操作ブロック
-            if (e.target.closest('.ui-panel') || e.target.closest('#debug-panel') || window.isModalOpen) return;
+            if (isOpening) return;
+            window.closeActionMenu(); // メニューを閉じる
+            if (e.target.closest('.ui-panel') || e.target.closest('#debug-panel') || e.target.closest('#action-menu') || window.isModalOpen) return;
             isDragging = false;
             pointerDownPos.set(e.clientX, e.clientY);
         });
@@ -519,25 +617,16 @@
         });
 
         window.addEventListener('pointerup', (e) => {
-            if (isOpening) return; // ★操作ブロック
-            if (e.target.closest('.ui-panel') || e.target.closest('#debug-panel') || window.isModalOpen) return;
+            if (isOpening) return;
+            if (e.target.closest('.ui-panel') || e.target.closest('#debug-panel') || e.target.closest('#action-menu') || window.isModalOpen) return;
             if (isDragging) return;
 
-            // トリプルタップ判定
+            // トリプルタップ(デバッグ)
             const now = Date.now();
-            if (now - lastTapTime < 350) {
-                tapStreak++;
-            } else {
-                tapStreak = 1;
-            }
+            if (now - lastTapTime < 350) tapStreak++;
+            else tapStreak = 1;
             lastTapTime = now;
-
-            if (tapStreak === 3) {
-                window.openDebug();
-                debugLog("Debug Mode Opened");
-                tapStreak = 0;
-                return;
-            }
+            if (tapStreak === 3) { window.openDebug(); debugLog("Debug Mode Opened"); tapStreak = 0; return; }
 
             handleTapAction(e);
         });
@@ -551,12 +640,26 @@
             mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
             raycaster.setFromCamera(mouse, camera);
 
+            // モデル判定
             const intersectsModel = raycaster.intersectObject(model, true);
             if (intersectsModel.length > 0) {
-                playIdlingAction("Tap on Model");
+                // ★ダブルタップ判定（モデル上のみ）
+                if (modelTapTimer) {
+                    clearTimeout(modelTapTimer);
+                    modelTapTimer = null;
+                    // Double Tap Action -> Show Menu
+                    showActionMenu(event.clientX, event.clientY);
+                } else {
+                    modelTapTimer = setTimeout(() => {
+                        modelTapTimer = null;
+                        // Single Tap Action -> Play Idling
+                        playIdlingAction("Tap on Model");
+                    }, 250);
+                }
                 return;
             }
 
+            // 地面判定
             const intersects = raycaster.intersectObject(ground);
             if (intersects.length > 0) {
                 const point = intersects[0].point.clone();
@@ -573,7 +676,14 @@
             }
         }
 
-        // --- ロジック ---
+        // アクションメニュー表示
+        function showActionMenu(x, y) {
+            const menu = document.getElementById('action-menu');
+            menu.style.display = 'block';
+            menu.style.left = x + 'px';
+            menu.style.top = (y - 50) + 'px'; // 少し上に表示
+            debugLog("Menu Opened");
+        }
 
         function resetIdleTimer() {
             if (isOpening) return;
@@ -584,7 +694,6 @@
         async function playIdlingAction(source) {
             if (isProcessing || isMoving || !idlingAction) return;
             debugLog(`Idling: ${source}`);
-            // ループ設定はロード時に完了しているため、そのままフェードイン
             await fadeTo(idlingAction, 0.5);
         }
 
@@ -592,49 +701,31 @@
             isProcessing = true;
             isBoostMode = boost;
             resetIdleTimer();
-
             flag.position.copy(targetPos);
             flag.children[1].material.color.set(isBoostMode ? 0xffd700 : 0xff4757); 
             flag.visible = true;
-
             debugLog(isBoostMode ? "Dash!" : "Walking...");
-
             const toTarget = new THREE.Vector3().subVectors(targetPos, model.position);
             await turnTowards(Math.atan2(toTarget.x, toTarget.z), false);
-            
             const runAction = actions['走行'] || Object.values(actions)[0];
             await fadeTo(runAction, 0.2);
             isMoving = true;
-            
             const speed = isBoostMode ? window.params.dashSpeed : window.params.walkSpeed;
             const stopDist = isBoostMode ? 0.8 : 0.1;
-
             await new Promise(resolve => {
                 const interval = setInterval(() => {
                     resetIdleTimer();
                     const dist = model.position.distanceTo(new THREE.Vector3(targetPos.x, model.position.y, targetPos.z));
-                    
                     if (dist > 0.05) {
                         const dir = new THREE.Vector3().subVectors(targetPos, model.position).normalize();
                         model.position.add(dir.setY(0).multiplyScalar(speed));
-                        
-                        if (isBoostMode && Math.random() > 0.3) {
-                            createSmoke(model.position.clone().add(dir.multiplyScalar(-0.4)));
-                        }
+                        if (isBoostMode && Math.random() > 0.3) createSmoke(model.position.clone().add(dir.multiplyScalar(-0.4)));
                     }
-
-                    if (dist <= stopDist) {
-                        clearInterval(interval);
-                        resolve();
-                    }
+                    if (dist <= stopDist) { clearInterval(interval); resolve(); }
                 }, 16);
             });
-
             if (isBoostMode) {
-                for(let i=0; i<15; i++) { 
-                    model.position.add(new THREE.Vector3().subVectors(targetPos, model.position).normalize().multiplyScalar(speed * 0.5));
-                    await new Promise(r => requestAnimationFrame(r));
-                }
+                for(let i=0; i<15; i++) { model.position.add(new THREE.Vector3().subVectors(targetPos, model.position).normalize().multiplyScalar(speed * 0.5)); await new Promise(r => requestAnimationFrame(r)); }
                 isMoving = false;
                 await new Promise(r => setTimeout(r, 100));
                 while (model.position.distanceTo(new THREE.Vector3(targetPos.x, model.position.y, targetPos.z)) > 0.1) {
@@ -645,11 +736,9 @@
                 isMoving = false;
             }
             flag.visible = false;
-
             const camPos = new THREE.Vector3();
             camera.getWorldPosition(camPos);
             await turnTowards(Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z), true);
-
             if (activeAction) activeAction.fadeOut(0.5);
             activeAction = null;
             isProcessing = false;
@@ -660,7 +749,6 @@
         async function turnTowards(targetAngle, isStepping) {
             const jumpAction = actions['垂直ジャンプ'] || Object.values(actions)[1];
             const runAction = actions['走行'] || Object.values(actions)[0];
-
             if (isStepping) {
                 await fadeTo(runAction, 0.2);
                 while (true) {
@@ -675,7 +763,6 @@
                 let diff = targetAngle - model.rotation.y;
                 while (diff > Math.PI) diff -= Math.PI * 2;
                 while (diff < -Math.PI) diff += Math.PI * 2;
-                
                 if (Math.abs(diff) > 0.3) {
                     await fadeTo(jumpAction, 0.1);
                     const startRot = model.rotation.y;
@@ -701,7 +788,6 @@
         function animate() {
             requestAnimationFrame(animate);
             if (mixer) mixer.update(1/60);
-
             for (let i = particles.length - 1; i >= 0; i--) {
                 const p = particles[i];
                 p.life -= 0.03;
@@ -710,7 +796,6 @@
                 p.mesh.material.opacity = p.life;
                 if (p.life <= 0) { scene.remove(p.mesh); particles.splice(i, 1); }
             }
-
             if (model) {
                 if (blobShadow) {
                     blobShadow.position.set(model.position.x, 0.01, model.position.z);
@@ -718,15 +803,12 @@
                     blobShadow.scale.set(s, s, 1);
                     blobShadow.material.opacity = s * 0.6;
                 }
-
                 updateEmotePosition();
-
                 if (!isOpening && !isDragging) {
                     const targetPos = model.position.clone().setY(0.5);
                     controls.target.lerp(targetPos, 0.1);
                 }
             }
-
             controls.update();
             renderer.render(scene, camera);
         }
