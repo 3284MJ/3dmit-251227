@@ -2,20 +2,111 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>3D Viewer - Mitsuhashi Navigation</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>3D Viewer - Mitsuhashi Manual</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #f0f0f0; }
+        body { margin: 0; overflow: hidden; background-color: #f0f0f0; touch-action: none; font-family: sans-serif; }
         canvas { display: block; width: 100vw; height: 100vh; }
-        #debug-log {
-            position: absolute; top: 10px; left: 10px;
-            background: rgba(0,0,0,0.7); color: white;
+        
+        /* UI共通スタイル */
+        .ui-panel {
+            position: absolute; left: 10px;
+            background: rgba(0,0,0,0.6); color: white;
             padding: 8px 12px; font-family: monospace; font-size: 12px;
-            pointer-events: none; z-index: 1000; border-radius: 4px;
+            border-radius: 4px; z-index: 100;
+            backdrop-filter: blur(2px);
         }
+
+        /* デバッグログ */
+        #debug-log {
+            top: 10px;
+            pointer-events: none;
+        }
+
+        /* 操作説明ボタン */
+        #help-btn {
+            top: 45px;
+            cursor: pointer; pointer-events: auto;
+            border: 1px solid rgba(255,255,255,0.3);
+            transition: background 0.2s;
+            display: flex; align-items: center; gap: 5px;
+        }
+        #help-btn:active { background: rgba(0,0,0,0.8); transform: translateY(1px); }
+        #help-btn::before { content: "❓"; font-size: 14px; }
+
+        /* --- モーダル（ヘルプ画面） --- */
+        .modal-overlay {
+            display: none;
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.6); z-index: 2000;
+            justify-content: center; align-items: center;
+        }
+        .modal-card {
+            background: white; width: 85%; max-width: 320px;
+            padding: 20px; border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            display: flex; flex-direction: column; gap: 10px;
+        }
+        @keyframes popIn {
+            from { transform: scale(0.8); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
+        .modal-header {
+            font-size: 18px; font-weight: bold; color: #333;
+            border-bottom: 2px solid #f0f0f0; padding-bottom: 10px; margin-bottom: 5px;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        
+        /* リスト表示用 */
+        .help-list-item {
+            background: #f8f9fa; padding: 12px; border-radius: 8px;
+            cursor: pointer; font-weight: bold; color: #555;
+            display: flex; justify-content: space-between; align-items: center;
+            transition: background 0.2s; border: 1px solid #eee;
+        }
+        .help-list-item:active { background: #e2e6ea; }
+        .help-list-item::after { content: "▶"; color: #ccc; font-size: 10px; }
+
+        /* 詳細表示用 */
+        .detail-view { display: none; text-align: left; }
+        .detail-title { font-size: 16px; font-weight: bold; color: #ff4757; margin-bottom: 10px; }
+        .detail-desc { font-size: 14px; color: #444; line-height: 1.6; min-height: 80px; }
+        .detail-icon { font-size: 30px; text-align: center; margin: 15px 0; display: block; }
+        
+        /* ボタン類 */
+        .btn-group { display: flex; gap: 10px; margin-top: 10px; }
+        .btn {
+            flex: 1; padding: 10px; border: none; border-radius: 8px;
+            font-weight: bold; cursor: pointer;
+        }
+        .btn-close { background: #666; color: white; }
+        .btn-back { background: #ddd; color: #333; }
     </style>
 </head>
 <body>
-    <div id="debug-log">Status: Ready.</div>
+    <div id="debug-log" class="ui-panel">Status: Ready.</div>
+    <div id="help-btn" class="ui-panel" onclick="openHelpMenu()">操作説明</div>
+
+    <div id="help-modal" class="modal-overlay">
+        <div class="modal-card">
+            <div class="modal-header">
+                <span id="modal-title">メニュー</span>
+                <span style="cursor:pointer; font-size:20px;" onclick="closeModal()">×</span>
+            </div>
+            
+            <div id="menu-list">
+            </div>
+
+            <div id="detail-area" class="detail-view">
+                <div id="detail-content"></div>
+                <div class="btn-group">
+                    <button class="btn btn-back" onclick="showList()">戻る</button>
+                    <button class="btn btn-close" onclick="closeModal()">閉じる</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <script type="importmap">
         {
@@ -26,6 +117,79 @@
         }
     </script>
     
+    <script>
+        // --- ヘルプデータ定義 ---
+        const helpContent = [
+            {
+                title: "歩いて移動",
+                icon: "👆",
+                desc: "地面を【1回タップ】すると、ミツハシくんがその場所までトコトコ歩いて移動します。"
+            },
+            {
+                title: "ダッシュ移動",
+                icon: "👆👆",
+                desc: "地面を【ダブルタップ（2回連打）】すると、煙を上げて猛ダッシュ！<br>急ぎすぎて止まれないかも…？"
+            },
+            {
+                title: "ひみつのアクション",
+                icon: "🤫",
+                desc: "ミツハシくん自身をタップするか、しばらく放っておくと…？"
+            }
+        ];
+
+        // --- UI操作ロジック ---
+        window.isModalOpen = false;
+
+        window.openHelpMenu = function() {
+            window.isModalOpen = true;
+            document.getElementById('help-modal').style.display = 'flex';
+            showList();
+        };
+
+        window.closeModal = function() {
+            window.isModalOpen = false;
+            document.getElementById('help-modal').style.display = 'none';
+        };
+
+        window.showList = function() {
+            const listEl = document.getElementById('menu-list');
+            const detailEl = document.getElementById('detail-area');
+            const titleEl = document.getElementById('modal-title');
+
+            detailEl.style.display = 'none';
+            listEl.style.display = 'flex';
+            listEl.style.flexDirection = 'column';
+            listEl.style.gap = '8px';
+            titleEl.innerText = '操作説明メニュー';
+
+            listEl.innerHTML = '';
+            helpContent.forEach((item, index) => {
+                const div = document.createElement('div');
+                div.className = 'help-list-item';
+                div.innerText = item.title;
+                div.onclick = () => showDetail(index);
+                listEl.appendChild(div);
+            });
+        };
+
+        window.showDetail = function(index) {
+            const listEl = document.getElementById('menu-list');
+            const detailEl = document.getElementById('detail-area');
+            const contentEl = document.getElementById('detail-content');
+            const titleEl = document.getElementById('modal-title');
+            const item = helpContent[index];
+
+            listEl.style.display = 'none';
+            detailEl.style.display = 'block';
+            titleEl.innerText = item.title;
+
+            contentEl.innerHTML = `
+                <span class="detail-icon">${item.icon}</span>
+                <div class="detail-desc">${item.desc}</div>
+            `;
+        };
+    </script>
+
     <script type="module">
         import * as THREE from 'three';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -40,7 +204,7 @@
 
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         document.body.appendChild(renderer.domElement);
 
         scene.add(new THREE.AmbientLight(0xffffff, 2.0));
@@ -55,18 +219,23 @@
         let mixer, model, blobShadow, flag;
         let actions = {}; 
         let activeAction = null; 
-        let targetPosition = null;
-        let isProcessing = false;
-        let isMoving = false;
+        
+        let isProcessing = false; 
+        let isMoving = false;     
+        let isBoostMode = false;  
+        let tapTimer = null;      
+        let particles = [];       
 
-        // ★追加: 3つ目のアクション用とタイマー用の変数
+        // ★統合: 追加の変数
         let specialAction = null;
         let idleTimer = null;
 
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
 
-        // 影の作成
+        // 影
         function createShadowTexture() {
             const canvas = document.createElement('canvas');
             canvas.width = 128; canvas.height = 128;
@@ -86,12 +255,12 @@
         blobShadow.position.y = 0.005;
         scene.add(blobShadow);
 
-        // 旗の作成
+        // 旗
         function createFlag() {
             const group = new THREE.Group();
             const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1), new THREE.MeshStandardMaterial({ color: 0x888888 }));
             pole.position.y = 0.5;
-            const cloth = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.02), new THREE.MeshStandardMaterial({ color: 0xff0000 }));
+            const cloth = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.02), new THREE.MeshStandardMaterial({ color: 0xff4757 }));
             cloth.position.set(0.2, 0.8, 0);
             group.add(pole, cloth);
             group.visible = false;
@@ -100,165 +269,229 @@
         }
         flag = createFlag();
 
+        // 煙作成
+        function createSmoke(spawnPos) {
+            const size = Math.random() * 0.2 + 0.15;
+            const geo = new THREE.SphereGeometry(size, 6, 6);
+            const mat = new THREE.MeshBasicMaterial({ color: 0xdddddd, transparent: true, opacity: 0.5 });
+            const p = new THREE.Mesh(geo, mat);
+            p.position.set(
+                spawnPos.x + (Math.random() - 0.5) * 0.2,
+                0.2, 
+                spawnPos.z + (Math.random() - 0.5) * 0.2
+            );
+            scene.add(p);
+            particles.push({ 
+                mesh: p, 
+                life: 1.0, 
+                velocity: new THREE.Vector3(0, 0.03, 0)
+            });
+        }
+
         new GLTFLoader().load('./model.glb', (gltf) => {
             model = gltf.scene;
             scene.add(model);
             mixer = new THREE.AnimationMixer(model);
-            
-            // アニメーションの読み込み
             gltf.animations.forEach((clip, index) => {
                 actions[clip.name || `Motion ${index}`] = mixer.clipAction(clip);
             });
-
-            // ★追加: 3番目のアニメーションを取得 (インデックス2)
-            // アクションが3つ以上ある場合のみ設定
+            
+            // ★統合: 3番目のアクション取得
             if (Object.values(actions).length > 2) {
                 specialAction = Object.values(actions)[2];
-            } else {
-                console.warn("3つ目のアニメーションが見つかりません。GLBを確認してください。");
             }
 
-            // ★追加: ロード完了時にタイマーを開始
+            // ★統合: 完了時にアイドルタイマー開始
             resetIdleTimer();
+            debugLog("Ready!");
         });
 
-        // ★追加: アイドルタイマーをリセットする関数
+        // ★統合: アイドルタイマー管理関数
         function resetIdleTimer() {
             if (idleTimer) clearTimeout(idleTimer);
-            
-            // 移動中などでなければタイマーセット (30000ms = 30秒)
+            // 30秒後に発動
             idleTimer = setTimeout(() => {
                 playSpecialAction("Idle Timeout");
             }, 30000); 
         }
 
-        // ★追加: 3つ目のアクションを実行する関数
-        async function playSpecialAction(triggerSource = "Tap") {
-            // 移動中や処理中、またはアクションがない場合は実行しない
+        // ★統合: スペシャルアクション実行関数
+        async function playSpecialAction(source) {
             if (isProcessing || isMoving || !specialAction) return;
-            
-            debugLog(`Special Action triggered by: ${triggerSource}`);
-            
-            // 現在のアニメーションからフェードして切り替え
+            debugLog(`Action: ${source}`);
             await fadeTo(specialAction, 0.5);
         }
 
-        window.addEventListener('mousedown', (event) => {
-            if (!model || isProcessing || isMoving) return;
+        // 入力ハンドラ
+        function handleInput(event) {
+            if (window.isModalOpen) return;
+            if (event.target.closest('.ui-panel')) return;
 
-            // ★追加: 操作があったのでタイマーをリセット
+            // ★統合: 操作があったのでタイマーリセット
             resetIdleTimer();
 
-            const mouse = new THREE.Vector2((event.clientX / window.innerWidth) * 2 - 1, -(event.clientY / window.innerHeight) * 2 + 1);
-            const raycaster = new THREE.Raycaster();
+            if (!model || isProcessing) return;
+
+            let clientX = event.touches ? event.touches[0].clientX : event.clientX;
+            let clientY = event.touches ? event.touches[0].clientY : event.clientY;
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+
             raycaster.setFromCamera(mouse, camera);
 
-            // ★追加: まずモデル(ミツハシくん)へのクリックを判定
-            // recursive: true で子メッシュも含めて判定します
+            // ★統合: 先にモデルへのクリック判定を行う
             const intersectsModel = raycaster.intersectObject(model, true);
             if (intersectsModel.length > 0) {
                 playSpecialAction("Tap on Model");
                 return; // モデルをクリックした場合は移動処理を行わない
             }
 
-            // 地面クリックの判定（既存の移動ロジック）
+            // 地面クリック判定（既存ロジック）
             const intersects = raycaster.intersectObject(ground);
             if (intersects.length > 0) {
-                targetPosition = intersects[0].point;
-                flag.position.copy(targetPosition);
-                flag.visible = true;
-                processNavigation();
-            }
-        });
+                const point = intersects[0].point.clone();
 
-        // 最短回転角度を計算するヘルパー
-        function getShortestAngle(targetAngle) {
-            let diff = targetAngle - model.rotation.y;
-            while (diff > Math.PI) diff -= Math.PI * 2;
-            while (diff < -Math.PI) diff += Math.PI * 2;
-            return diff;
+                if (tapTimer == null) {
+                    tapTimer = setTimeout(() => {
+                        tapTimer = null;
+                        startNavigation(point, false); 
+                    }, 250); 
+                } else {
+                    clearTimeout(tapTimer);
+                    tapTimer = null;
+                    startNavigation(point, true); 
+                }
+            }
         }
 
-        async function processNavigation() {
+        window.addEventListener('mousedown', handleInput);
+        window.addEventListener('touchstart', handleInput, { passive: false });
+
+        async function startNavigation(targetPos, boost) {
             isProcessing = true;
+            isBoostMode = boost;
             
-            // アクション取得（名前で指定するか、インデックスでフォールバック）
-            const jumpAction = actions['垂直ジャンプ'] || Object.values(actions)[1];
-            const runAction = actions['走行'] || Object.values(actions)[0];
+            // 移動開始時もタイマーリセット
+            resetIdleTimer();
 
-            // --- 1. ジャンプによる方向転換 ---
-            debugLog("Step 1: Jumping to turn...");
-            while (true) {
-                const toTarget = new THREE.Vector3().subVectors(targetPosition, model.position);
-                const diff = getShortestAngle(Math.atan2(toTarget.x, toTarget.z));
-                if (Math.abs(diff) < THREE.MathUtils.degToRad(5)) break;
+            flag.position.copy(targetPos);
+            flag.children[1].material.color.set(isBoostMode ? 0xffd700 : 0xff4757); 
+            flag.visible = true;
 
-                const step = Math.sign(diff) * Math.min(Math.abs(diff), THREE.MathUtils.degToRad(60));
-                await fadeTo(jumpAction, 0.1);
-                
-                const startRot = model.rotation.y;
-                const startTime = performance.now();
-                await new Promise(res => {
-                    function r() {
-                        const p = Math.min((performance.now() - startTime) / 800, 1);
-                        model.rotation.y = startRot + step * p;
-                        if (p < 1) requestAnimationFrame(r); else res();
-                    }
-                    r();
-                });
-                await new Promise(r => setTimeout(r, 100));
-            }
+            debugLog(isBoostMode ? "BOOST MODE!" : "Walking...");
 
-            // --- 2. 0.2秒の停止 (タメ) ---
-            if (activeAction) activeAction.fadeOut(0.2);
-            activeAction = null;
+            const speed = isBoostMode ? 0.12 : 0.06;
+
+            // 1. 方向転換
+            const toTarget = new THREE.Vector3().subVectors(targetPos, model.position);
+            const targetAngle = Math.atan2(toTarget.x, toTarget.z);
+            await turnTowards(targetAngle, false);
+            
             await new Promise(r => setTimeout(r, 200));
 
-            // --- 3. 走行による移動 ---
-            debugLog("Step 2: Moving...");
-            await fadeTo(runAction, 0.3);
+            // 2. 移動
+            const runAction = actions['走行'] || Object.values(actions)[0];
+            await fadeTo(runAction, 0.2);
             isMoving = true;
             
-            // 到着待ち
             await new Promise(resolve => {
                 const check = setInterval(() => {
-                    // 移動中も一応タイマーリセット（念の為）
+                    // 移動中も定期的にタイマーリセット（念の為）
                     resetIdleTimer();
-                    const dist = model.position.distanceTo(new THREE.Vector3(targetPosition.x, model.position.y, targetPosition.z));
-                    if (dist <= 0.1) {
+                    const currentDist = model.position.distanceTo(new THREE.Vector3(targetPos.x, model.position.y, targetPos.z));
+                    const stopDist = isBoostMode ? 0.8 : 0.1;
+                    
+                    if (currentDist > 0.05) {
+                        const dir = new THREE.Vector3().subVectors(targetPos, model.position).normalize();
+                        model.position.add(dir.setY(0).multiplyScalar(speed));
+                        
+                        if (isBoostMode) {
+                            const backOffset = dir.clone().multiplyScalar(-0.4);
+                            const smokePos = model.position.clone().add(backOffset);
+                            if (Math.random() > 0.3) createSmoke(smokePos);
+                        }
+                    }
+
+                    if (currentDist <= stopDist) {
                         clearInterval(check);
                         resolve();
                     }
-                }, 100);
+                }, 16);
             });
-            isMoving = false;
-            flag.visible = false;
 
-            // --- 4. 走行（足踏み）による方向転換（カメラ向き） ---
-            debugLog("Step 3: Stepping to face camera...");
-            // 移動が終わっても runAction（走行）を維持したまま回転
-            while (true) {
-                const camPos = new THREE.Vector3();
-                camera.getWorldPosition(camPos);
-                const diff = getShortestAngle(Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z));
+            // 3. 到着後
+            if (isBoostMode) {
+                // オーバーラン演出
+                for(let i=0; i<20; i++) { 
+                    const dir = new THREE.Vector3().subVectors(targetPos, model.position).normalize();
+                    model.position.add(dir.multiplyScalar(0.04)); 
+                    await new Promise(r => requestAnimationFrame(r));
+                }
                 
-                // 向きが合ったらループ終了
-                if (Math.abs(diff) < THREE.MathUtils.degToRad(5)) break;
+                isMoving = false;
+                await new Promise(r => setTimeout(r, 200));
 
-                // 走行アニメーションと同じくらいの速さで回転させる
-                const turnSpeed = 0.05; 
-                model.rotation.y += Math.sign(diff) * Math.min(Math.abs(diff), turnSpeed);
-                await new Promise(r => requestAnimationFrame(r));
+                while (model.position.distanceTo(new THREE.Vector3(targetPos.x, model.position.y, targetPos.z)) > 0.1) {
+                    const dir = new THREE.Vector3().subVectors(targetPos, model.position).normalize();
+                    model.position.add(dir.multiplyScalar(0.03)); 
+                    await new Promise(r => requestAnimationFrame(r));
+                }
+            } else {
+                isMoving = false;
             }
 
-            // すべて終了
+            flag.visible = false;
+
+            // 4. 足踏み回転
+            const camPos = new THREE.Vector3();
+            camera.getWorldPosition(camPos);
+            const finalAngle = Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z);
+            await turnTowards(finalAngle, true);
+
             if (activeAction) activeAction.fadeOut(0.5);
             activeAction = null;
             isProcessing = false;
-            debugLog("Goal reached and facing camera.");
             
-            // 移動完了後、改めてタイマーをセット
+            // 処理終了後、改めてタイマーセット
             resetIdleTimer();
+            debugLog("Ready.");
+        }
+
+        async function turnTowards(targetAngle, isStepping) {
+            const jumpAction = actions['垂直ジャンプ'] || Object.values(actions)[1];
+            const runAction = actions['走行'] || Object.values(actions)[0];
+
+            if (isStepping) {
+                await fadeTo(runAction, 0.2);
+                while (true) {
+                    let diff = targetAngle - model.rotation.y;
+                    while (diff > Math.PI) diff -= Math.PI * 2;
+                    while (diff < -Math.PI) diff += Math.PI * 2;
+                    if (Math.abs(diff) < 0.05) break;
+                    model.rotation.y += Math.sign(diff) * 0.06;
+                    await new Promise(r => requestAnimationFrame(r));
+                }
+            } else {
+                while (true) {
+                    let diff = targetAngle - model.rotation.y;
+                    while (diff > Math.PI) diff -= Math.PI * 2;
+                    while (diff < -Math.PI) diff += Math.PI * 2;
+                    if (Math.abs(diff) < 0.1) break;
+                    const step = Math.sign(diff) * Math.min(Math.abs(diff), Math.PI/3);
+                    await fadeTo(jumpAction, 0.1);
+                    const startR = model.rotation.y;
+                    const startTime = performance.now();
+                    await new Promise(res => {
+                        function r() {
+                            const p = Math.min((performance.now() - startTime) / 800, 1);
+                            model.rotation.y = startR + step * p;
+                            if (p < 1) requestAnimationFrame(r); else res();
+                        }
+                        r();
+                    });
+                }
+            }
         }
 
         async function fadeTo(nextAction, duration) {
@@ -270,23 +503,36 @@
 
         function animate() {
             requestAnimationFrame(animate);
-            if (mixer) mixer.update(1/60);
+            const delta = 1/60;
+            if (mixer) mixer.update(delta);
 
-            if (isMoving && model && targetPosition) {
-                const dir = new THREE.Vector3().subVectors(targetPosition, model.position).normalize();
-                model.position.add(dir.setY(0).multiplyScalar(0.06));
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.life -= 0.02;
+                p.mesh.position.add(p.velocity);
+                p.mesh.material.opacity = p.life;
+                p.mesh.scale.multiplyScalar(1.05);
+                if (p.life <= 0) {
+                    scene.remove(p.mesh);
+                    particles.splice(i, 1);
+                }
             }
 
             if (model && blobShadow) {
                 blobShadow.position.set(model.position.x, 0.005, model.position.z);
                 blobShadow.material.opacity = Math.max(0, 1.0 - model.position.y * 0.4);
-                const s = Math.max(0.1, 1.0 - model.position.y * 0.3);
-                blobShadow.scale.set(s, s, 1);
+                blobShadow.scale.setScalar(Math.max(0.1, 1.0 - model.position.y * 0.3));
             }
             controls.update();
             renderer.render(scene, camera);
         }
         animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
     </script>
 </body>
 </html>
