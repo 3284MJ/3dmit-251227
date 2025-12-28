@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>3D Viewer - Mitsuhashi Manual</title>
+    <title>3D Viewer - Mitsuhashi Debug v1.1.0</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #f0f0f0; touch-action: none; font-family: sans-serif; }
         canvas { display: block; width: 100vw; height: 100vh; }
@@ -20,66 +20,64 @@
         /* デバッグログ */
         #debug-log {
             top: 10px;
-            pointer-events: none; /* 下の操作を邪魔しない */
+            pointer-events: none;
         }
 
         /* 操作説明ボタン */
         #help-btn {
-            top: 45px; /* ログの下に配置 */
+            top: 45px;
             cursor: pointer; pointer-events: auto;
             border: 1px solid rgba(255,255,255,0.3);
-            transition: background 0.2s;
             display: flex; align-items: center; gap: 5px;
         }
-        #help-btn:active { background: rgba(0,0,0,0.8); transform: translateY(1px); }
-        #help-btn::before { content: "❓"; font-size: 14px; }
+
+        /* --- デバッグパネル (初期非表示) --- */
+        #debug-panel {
+            display: none; /* トリプルクリックで表示 */
+            position: absolute; top: 10px; right: 10px; left: auto;
+            width: 220px; background: rgba(0,0,0,0.85); color: #0f0;
+            padding: 15px; border-radius: 8px; font-family: monospace;
+            border: 1px solid #0f0;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.2);
+            z-index: 3000;
+        }
+        #debug-panel h3 { margin: 0 0 10px 0; font-size: 14px; border-bottom: 1px solid #0f0; padding-bottom: 5px; }
+        .debug-row { margin-bottom: 12px; display: flex; flex-direction: column; gap: 4px; }
+        .debug-row label { font-size: 11px; color: #ccc; display: flex; justify-content: space-between; }
+        .debug-btn {
+            background: #003300; color: #0f0; border: 1px solid #0f0;
+            padding: 8px; margin-top: 5px; cursor: pointer; width: 100%;
+            font-family: monospace; transition: background 0.2s;
+        }
+        .debug-btn:active { background: #0f0; color: #000; }
+        .close-debug { text-align: right; cursor: pointer; margin-bottom: 5px; font-size: 16px; }
 
         /* --- モーダル（ヘルプ画面） --- */
         .modal-overlay {
-            display: none; /* 初期状態は非表示 */
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0, 0, 0, 0.6); z-index: 2000;
             justify-content: center; align-items: center;
         }
         .modal-card {
             background: white; width: 85%; max-width: 320px;
             padding: 20px; border-radius: 15px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-            animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
             display: flex; flex-direction: column; gap: 10px;
-        }
-        @keyframes popIn {
-            from { transform: scale(0.8); opacity: 0; }
-            to { transform: scale(1); opacity: 1; }
         }
         .modal-header {
             font-size: 18px; font-weight: bold; color: #333;
-            border-bottom: 2px solid #f0f0f0; padding-bottom: 10px; margin-bottom: 5px;
+            border-bottom: 2px solid #f0f0f0; padding-bottom: 10px;
             display: flex; justify-content: space-between; align-items: center;
         }
-        
-        /* リスト表示用 */
         .help-list-item {
             background: #f8f9fa; padding: 12px; border-radius: 8px;
             cursor: pointer; font-weight: bold; color: #555;
             display: flex; justify-content: space-between; align-items: center;
-            transition: background 0.2s; border: 1px solid #eee;
+            border: 1px solid #eee; margin-bottom: 8px;
         }
-        .help-list-item:active { background: #e2e6ea; }
-        .help-list-item::after { content: "▶"; color: #ccc; font-size: 10px; }
-
-        /* 詳細表示用 */
-        .detail-view { display: none; text-align: left; }
-        .detail-title { font-size: 16px; font-weight: bold; color: #ff4757; margin-bottom: 10px; }
-        .detail-desc { font-size: 14px; color: #444; line-height: 1.6; min-height: 80px; }
+        .detail-view { display: none; }
         .detail-icon { font-size: 30px; text-align: center; margin: 15px 0; display: block; }
-        
-        /* ボタン類 */
         .btn-group { display: flex; gap: 10px; margin-top: 10px; }
-        .btn {
-            flex: 1; padding: 10px; border: none; border-radius: 8px;
-            font-weight: bold; cursor: pointer;
-        }
+        .btn { flex: 1; padding: 10px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
         .btn-close { background: #666; color: white; }
         .btn-back { background: #ddd; color: #333; }
     </style>
@@ -88,16 +86,31 @@
     <div id="debug-log" class="ui-panel">Status: Ready.</div>
     <div id="help-btn" class="ui-panel" onclick="openHelpMenu()">操作説明</div>
 
+    <div id="debug-panel">
+        <div class="close-debug" onclick="toggleDebugPanel()">[x] Close</div>
+        <h3>🛠️ MITSUHASHI DEBUG</h3>
+        
+        <div class="debug-row">
+            <label>Walk Speed <span id="val-walk">0.06</span></label>
+            <input type="range" id="inp-walk" min="0.01" max="0.2" step="0.01" value="0.06">
+        </div>
+
+        <div class="debug-row">
+            <label>Dash Speed <span id="val-dash">0.12</span></label>
+            <input type="range" id="inp-dash" min="0.05" max="0.5" step="0.01" value="0.12">
+        </div>
+
+        <button class="debug-btn" onclick="resetCameraPosition()">Reset Camera</button>
+        <button class="debug-btn" onclick="resetMitsuhashi()">Reset Mitsuhashi</button>
+    </div>
+
     <div id="help-modal" class="modal-overlay">
         <div class="modal-card">
             <div class="modal-header">
                 <span id="modal-title">メニュー</span>
                 <span style="cursor:pointer; font-size:20px;" onclick="closeModal()">×</span>
             </div>
-            
-            <div id="menu-list">
-                </div>
-
+            <div id="menu-list"></div>
             <div id="detail-area" class="detail-view">
                 <div id="detail-content"></div>
                 <div class="btn-group">
@@ -118,46 +131,53 @@
     </script>
     
     <script>
+        // --- 設定値管理 (v1.1.0) ---
+        const CONFIG = {
+            walkSpeed: 0.06,
+            boostSpeed: 0.12
+        };
+
+        // UIイベントリスナー
+        document.getElementById('inp-walk').addEventListener('input', (e) => {
+            CONFIG.walkSpeed = parseFloat(e.target.value);
+            document.getElementById('val-walk').innerText = CONFIG.walkSpeed;
+        });
+        document.getElementById('inp-dash').addEventListener('input', (e) => {
+            CONFIG.boostSpeed = parseFloat(e.target.value);
+            document.getElementById('val-dash').innerText = CONFIG.boostSpeed;
+        });
+
+        function toggleDebugPanel() {
+            const panel = document.getElementById('debug-panel');
+            panel.style.display = (panel.style.display === 'none' || panel.style.display === '') ? 'block' : 'none';
+        }
+
         // --- ヘルプデータ定義 ---
         const helpContent = [
-            {
-                title: "歩いて移動",
-                icon: "👆",
-                desc: "地面を【1回タップ】すると、ミツハシくんがその場所までトコトコ歩いて移動します。"
-            },
-            {
-                title: "ダッシュ移動",
-                icon: "👆👆",
-                desc: "地面を【ダブルタップ（2回連打）】すると、煙を上げて猛ダッシュ！<br>急ぎすぎて止まれないかも…？"
-            }
+            { title: "歩いて移動", icon: "👆", desc: "地面を【1回タップ】すると、ミツハシくんがその場所までトコトコ歩いて移動します。" },
+            { title: "ダッシュ移動", icon: "👆👆", desc: "地面を【ダブルタップ】すると、煙を上げて猛ダッシュ！" },
+            { title: "？？？", icon: "🔒", desc: "何もないところを素早く3回タップすると…？（開発者用モード）" }
         ];
 
-        // --- UI操作ロジック ---
         window.isModalOpen = false;
-
         window.openHelpMenu = function() {
             window.isModalOpen = true;
             document.getElementById('help-modal').style.display = 'flex';
-            showList(); // リストを表示
+            showList();
         };
-
         window.closeModal = function() {
             window.isModalOpen = false;
             document.getElementById('help-modal').style.display = 'none';
         };
-
         window.showList = function() {
             const listEl = document.getElementById('menu-list');
             const detailEl = document.getElementById('detail-area');
             const titleEl = document.getElementById('modal-title');
-
             detailEl.style.display = 'none';
             listEl.style.display = 'flex';
             listEl.style.flexDirection = 'column';
             listEl.style.gap = '8px';
             titleEl.innerText = '操作説明メニュー';
-
-            // リスト再生成
             listEl.innerHTML = '';
             helpContent.forEach((item, index) => {
                 const div = document.createElement('div');
@@ -167,22 +187,16 @@
                 listEl.appendChild(div);
             });
         };
-
         window.showDetail = function(index) {
             const listEl = document.getElementById('menu-list');
             const detailEl = document.getElementById('detail-area');
             const contentEl = document.getElementById('detail-content');
             const titleEl = document.getElementById('modal-title');
             const item = helpContent[index];
-
             listEl.style.display = 'none';
             detailEl.style.display = 'block';
             titleEl.innerText = item.title;
-
-            contentEl.innerHTML = `
-                <span class="detail-icon">${item.icon}</span>
-                <div class="detail-desc">${item.desc}</div>
-            `;
+            contentEl.innerHTML = `<span class="detail-icon">${item.icon}</span><div class="detail-desc">${item.desc}</div>`;
         };
     </script>
 
@@ -219,6 +233,7 @@
         let isProcessing = false; 
         let isMoving = false;     
         let isBoostMode = false;  
+        let cancelMove = false; // 強制停止用フラグ
         let tapTimer = null;      
         let particles = [];       
 
@@ -226,6 +241,33 @@
         const mouse = new THREE.Vector2();
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
+
+        // --- デバッグ機能 (Global Scopeへの露出) ---
+        window.resetCameraPosition = function() {
+            camera.position.set(0, 5, 10);
+            controls.target.set(0, 0, 0);
+            controls.update();
+            debugLog("Camera Reset.");
+        };
+
+        window.resetMitsuhashi = function() {
+            if (!model) return;
+            // 移動中のループを止めるためにキャンセル用のフラグを立てる
+            cancelMove = true;
+            
+            // 位置と回転のリセット
+            model.position.set(0, 0, 0);
+            model.rotation.set(0, 0, 0);
+            
+            // アニメーションのリセット
+            if (activeAction) activeAction.fadeOut(0.2);
+            activeAction = null;
+            
+            isProcessing = false;
+            isMoving = false;
+            flag.visible = false;
+            debugLog("Mitsuhashi Reset.");
+        };
 
         // 影
         function createShadowTexture() {
@@ -267,17 +309,9 @@
             const geo = new THREE.SphereGeometry(size, 6, 6);
             const mat = new THREE.MeshBasicMaterial({ color: 0xdddddd, transparent: true, opacity: 0.5 });
             const p = new THREE.Mesh(geo, mat);
-            p.position.set(
-                spawnPos.x + (Math.random() - 0.5) * 0.2,
-                0.2, 
-                spawnPos.z + (Math.random() - 0.5) * 0.2
-            );
+            p.position.set(spawnPos.x + (Math.random() - 0.5) * 0.2, 0.2, spawnPos.z + (Math.random() - 0.5) * 0.2);
             scene.add(p);
-            particles.push({ 
-                mesh: p, 
-                life: 1.0, 
-                velocity: new THREE.Vector3(0, 0.03, 0)
-            });
+            particles.push({ mesh: p, life: 1.0, velocity: new THREE.Vector3(0, 0.03, 0) });
         }
 
         new GLTFLoader().load('./model.glb', (gltf) => {
@@ -287,16 +321,33 @@
             gltf.animations.forEach((clip) => {
                 actions[clip.name || `Motion`] = mixer.clipAction(clip);
             });
-            debugLog("Ready!");
+            debugLog("Ready! (Triple click for Debug)");
         });
 
-        // 入力ハンドラ
-        function handleInput(event) {
-            // モーダルが開いている間は3D空間のタップを無効化
-            if (window.isModalOpen) return;
-            // ボタン等UI上のクリックは無視（イベントバブリング対策はCSSのpointer-events制御で対応済だが念のため）
-            if (event.target.closest('.ui-panel')) return;
+        // --- 入力ハンドラ (トリプルクリック対応) ---
+        let clickCount = 0;
+        let clickResetTimer = null;
 
+        function handleInput(event) {
+            if (window.isModalOpen) return;
+            // UIパネル操作時は無視
+            if (event.target.closest('.ui-panel') || event.target.closest('#debug-panel')) return;
+
+            // --- トリプルクリック判定ロジック ---
+            clickCount++;
+            if (clickCount === 1) {
+                clickResetTimer = setTimeout(() => { clickCount = 0; }, 500); // 500ms以内に3回
+            }
+            if (clickCount === 3) {
+                clearTimeout(clickResetTimer);
+                clickCount = 0;
+                toggleDebugPanel();
+                debugLog("Debug Mode Toggled!");
+                return; // デバッグ切り替え時は移動させない
+            }
+            // ----------------------------------
+
+            // 移動中の入力は無視（ただしトリプルクリック判定は通過させるため、ここに配置）
             if (!model || isProcessing) return;
 
             let clientX = event.touches ? event.touches[0].clientX : event.clientX;
@@ -330,6 +381,7 @@
         async function startNavigation(targetPos, boost) {
             isProcessing = true;
             isBoostMode = boost;
+            cancelMove = false; // キャンセルフラグ初期化
             
             flag.position.copy(targetPos);
             flag.children[1].material.color.set(isBoostMode ? 0xffd700 : 0xff4757); 
@@ -337,13 +389,16 @@
 
             debugLog(isBoostMode ? "BOOST MODE!" : "Walking...");
 
-            const speed = isBoostMode ? 0.12 : 0.06;
+            // 設定値を使用
+            const speed = isBoostMode ? CONFIG.boostSpeed : CONFIG.walkSpeed;
 
             // 1. 方向転換
             const toTarget = new THREE.Vector3().subVectors(targetPos, model.position);
             const targetAngle = Math.atan2(toTarget.x, toTarget.z);
             await turnTowards(targetAngle, false);
             
+            if (cancelMove) return; // リセットされたら中断
+
             await new Promise(r => setTimeout(r, 200));
 
             // 2. 移動
@@ -353,12 +408,21 @@
             
             await new Promise(resolve => {
                 const check = setInterval(() => {
+                    if (cancelMove) {
+                        clearInterval(check);
+                        resolve();
+                        return;
+                    }
+
+                    // 設定値（リアルタイム反映のためループ内で参照）
+                    const currentSpeed = isBoostMode ? CONFIG.boostSpeed : CONFIG.walkSpeed;
+                    
                     const currentDist = model.position.distanceTo(new THREE.Vector3(targetPos.x, model.position.y, targetPos.z));
                     const stopDist = isBoostMode ? 0.8 : 0.1;
                     
                     if (currentDist > 0.05) {
                         const dir = new THREE.Vector3().subVectors(targetPos, model.position).normalize();
-                        model.position.add(dir.setY(0).multiplyScalar(speed));
+                        model.position.add(dir.setY(0).multiplyScalar(currentSpeed));
                         
                         if (isBoostMode) {
                             const backOffset = dir.clone().multiplyScalar(-0.4);
@@ -374,10 +438,13 @@
                 }, 16);
             });
 
+            if (cancelMove) return;
+
             // 3. 到着後
             if (isBoostMode) {
-                // オーバーラン演出
+                // オーバーラン
                 for(let i=0; i<20; i++) { 
+                    if (cancelMove) break;
                     const dir = new THREE.Vector3().subVectors(targetPos, model.position).normalize();
                     model.position.add(dir.multiplyScalar(0.04)); 
                     await new Promise(r => requestAnimationFrame(r));
@@ -386,7 +453,9 @@
                 isMoving = false;
                 await new Promise(r => setTimeout(r, 200));
 
+                // 戻る動作
                 while (model.position.distanceTo(new THREE.Vector3(targetPos.x, model.position.y, targetPos.z)) > 0.1) {
+                    if (cancelMove) break;
                     const dir = new THREE.Vector3().subVectors(targetPos, model.position).normalize();
                     model.position.add(dir.multiplyScalar(0.03)); 
                     await new Promise(r => requestAnimationFrame(r));
@@ -396,6 +465,8 @@
             }
 
             flag.visible = false;
+
+            if (cancelMove) return;
 
             // 4. 足踏み回転
             const camPos = new THREE.Vector3();
@@ -410,12 +481,14 @@
         }
 
         async function turnTowards(targetAngle, isStepping) {
+            if (cancelMove) return;
             const jumpAction = actions['垂直ジャンプ'] || Object.values(actions)[1];
             const runAction = actions['走行'] || Object.values(actions)[0];
 
             if (isStepping) {
                 await fadeTo(runAction, 0.2);
                 while (true) {
+                    if (cancelMove) break;
                     let diff = targetAngle - model.rotation.y;
                     while (diff > Math.PI) diff -= Math.PI * 2;
                     while (diff < -Math.PI) diff += Math.PI * 2;
@@ -425,6 +498,7 @@
                 }
             } else {
                 while (true) {
+                    if (cancelMove) break;
                     let diff = targetAngle - model.rotation.y;
                     while (diff > Math.PI) diff -= Math.PI * 2;
                     while (diff < -Math.PI) diff += Math.PI * 2;
@@ -435,6 +509,7 @@
                     const startTime = performance.now();
                     await new Promise(res => {
                         function r() {
+                            if (cancelMove) { res(); return; }
                             const p = Math.min((performance.now() - startTime) / 800, 1);
                             model.rotation.y = startR + step * p;
                             if (p < 1) requestAnimationFrame(r); else res();
