@@ -5,12 +5,12 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // --- Global Variables & Parameters ---
 window.params = { walkSpeed: 0.06, dashSpeed: 0.12 };
 
-// --- UI Logic ---
+// --- UI Logic (UI関連は変更なし) ---
 const helpContent = [
     { title: "歩いて移動", icon: "👆", desc: "地面を【1回タップ】" },
     { title: "ダッシュ移動", icon: "👆👆", desc: "地面を【2回連打】" },
-    { title: "アイドリング", icon: "🤫", desc: "ミツハシくんをタップ、または放置" },
-    { title: "デバッグモード", icon: "🔧", desc: "画面のどこかを【3回連打】" }
+    { title: "アニメーション3", icon: "🤫", desc: "シングルタップ / 放置" },
+    { title: "アニメーション4", icon: "🎒", desc: "ダブルタップ（1回のみ再生）" }
 ];
 
 window.isModalOpen = false;
@@ -75,12 +75,18 @@ ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
 
-// --- Core Logic Variables ---
+// --- Core Variables ---
 let mixer, model, blobShadow, flag;
 let actions = {}; 
 let activeAction = null; 
-let idlingAction = null; // ループ用 (旧アニメ4 / Index 3)
-let specialAction = null; // 1回再生用 (旧アニメ3 / Index 2)
+
+// ★アニメーション管理変数
+let animIdle = null; // 待機 (Index 0)
+let animRun = null;  // 走行
+let animJump = null; // ジャンプ
+let animLoop = null; // アニメーション3 (Index 2)
+let animOnce = null; // アニメーション4 (Index 3)
+
 let idleTimer = null;
 let isProcessing = false, isMoving = false, isBoostMode = false, isOpening = true, isDragging = false;
 let lastTapTime = 0, tapStreak = 0, tapResetTimer = null;
@@ -122,44 +128,59 @@ new GLTFLoader().load('./model.glb', (gltf) => {
     model.traverse(c => { if(c.isMesh) c.castShadow = true; });
     scene.add(model);
     mixer = new THREE.AnimationMixer(model);
-    gltf.animations.forEach((clip, i) => { actions[clip.name || `Motion${i}`] = mixer.clipAction(clip); });
     
-    // 【修正】割り当て逆転とループ設定
+    // 全アニメーション読み込み
+    gltf.animations.forEach((clip, i) => { 
+        actions[clip.name || `Motion${i}`] = mixer.clipAction(clip); 
+    });
+    
     const actionList = Object.values(actions);
-    if (actionList.length > 3) {
-        // アニメ3 (Index 2) -> 1回再生用 (特殊アクション)
-        specialAction = actionList[2];
-        specialAction.setLoop(THREE.LoopOnce);
-        specialAction.clampWhenFinished = true;
-
-        // アニメ4 (Index 3) -> ループ用 (アイドリング)
-        idlingAction = actionList[3];
-        idlingAction.setLoop(THREE.LoopRepeat);
-    } else if (actionList.length > 2) {
-        // もし3つしかない場合のフォールバック
-        idlingAction = actionList[2];
-        idlingAction.setLoop(THREE.LoopRepeat);
+    
+    // ★アニメーション割り当て（ここでインデックスを確定させます）
+    animIdle = actionList[0]; // 待機
+    animRun = actions['走行'] || actionList[0]; // なければIdleで代用
+    animJump = actions['垂直ジャンプ'] || actionList[1]; // ジャンプ
+    
+    // アニメ3 (Index 2): 待機・リロード・シングルタップ用 -> ループ
+    if (actionList.length > 2) {
+        animLoop = actionList[2];
+        animLoop.setLoop(THREE.LoopRepeat);
     }
     
+    // アニメ4 (Index 3): ダブルタップ用 -> 1回再生
+    if (actionList.length > 3) {
+        animOnce = actionList[3];
+        animOnce.setLoop(THREE.LoopOnce);
+        animOnce.clampWhenFinished = true;
+    }
+
     runOpeningSequence();
 });
 
+// --- Actions (関数単位修正) ---
+
+// 1. リロード時のオープニング
 async function runOpeningSequence() {
     debugLog("Opening...");
     model.position.set(0, 0, -12);
+    model.rotation.set(0, 0, 0);
     camera.position.set(0, 1.5, 4);
     controls.target.set(0, 0.8, -12); controls.update();
     
-    let startAnim = actions['Motion 0'] || Object.values(actions)[0];
-    if (idlingAction) startAnim = idlingAction;
-    startAnim.play(); activeAction = startAnim;
+    // ★修正1: アニメーション3を実行（ループ）
+    const startAnim = animLoop || animIdle;
+    startAnim.reset().play(); 
+    activeAction = startAnim;
     
     await new Promise(r => setTimeout(r, 2000));
-    const pop = document.getElementById('emote-pop'); pop.style.display = 'block'; updateEmotePosition();
+    
+    const pop = document.getElementById('emote-pop'); 
+    pop.style.display = 'block'; updateEmotePosition();
     await new Promise(r => setTimeout(r, 1000)); pop.style.display = 'none';
     
-    const run = actions['走行'] || Object.values(actions)[0];
-    await fadeTo(run, 0.2); isMoving = true;
+    // 走行開始
+    await fadeTo(animRun, 0.2); 
+    isMoving = true;
     while (model.position.z < -2.0) { 
         model.position.z += 0.15; 
         controls.target.set(0, 0.8, model.position.z); 
@@ -168,22 +189,149 @@ async function runOpeningSequence() {
     }
     isMoving = false;
     
-    const idle = actions['Motion 0'] || Object.values(actions)[0];
-    await fadeTo(idle, 0.3);
+    // ★修正: 確実にアイドルに戻す
+    await fadeTo(animIdle, 0.3);
 
-    // 【修正】カメラ位置を戻さず、重心位置のみ更新
+    // カメラ位置は変えず、注視点のみ更新
     controls.target.set(0, 0.5, -2); 
     controls.update();
 
-    isOpening = false; controls.enabled = true; resetIdleTimer(); debugLog("Ready.");
+    isOpening = false; 
+    controls.enabled = true; 
+    resetIdleTimer(); 
+    debugLog("Ready.");
 }
 
-// --- Animation Control ---
+// 2. 待機タイマー処理
+function resetIdleTimer() { 
+    if (idleTimer) clearTimeout(idleTimer); 
+    // ★修正2: アニメーション3を実行
+    idleTimer = setTimeout(() => playLoopAction("Idle Timeout"), 30000); 
+}
+
+// 共通: アニメ3実行（ループ）
+async function playLoopAction(src) { 
+    if (isProcessing || isMoving || !animLoop) return; 
+    debugLog(`LoopAnim: ${src}`); 
+    await fadeTo(animLoop, 0.5); 
+}
+
+// 共通: アニメ4実行（1回）
+async function playOnceAction() {
+    if (!animOnce) return;
+    debugLog("Play: OnceAnim (Anim 4)");
+    isProcessing = true;
+    resetIdleTimer();
+
+    await fadeTo(animOnce, 0.3);
+    
+    // アニメーション時間分待機
+    const duration = animOnce.getClip().duration;
+    await new Promise(r => setTimeout(r, duration * 1000));
+    
+    // 終了後少し待ってアイドルへ
+    await new Promise(r => setTimeout(r, 500));
+    await fadeTo(animIdle, 0.5);
+    
+    isProcessing = false;
+    resetIdleTimer();
+}
+
+// 5. 移動処理
+async function startNavigation(targetPos, boost) {
+    isProcessing = true; isBoostMode = boost;
+    flag.position.copy(targetPos); flag.children[1].material.color.set(isBoostMode ? 0xffd700 : 0xff4757); flag.visible = true;
+    
+    const toTarget = new THREE.Vector3().subVectors(targetPos, model.position);
+    await turnTowards(Math.atan2(toTarget.x, toTarget.z), false);
+    
+    await fadeTo(animRun, 0.2); 
+    isMoving = true;
+    
+    const speed = isBoostMode ? window.params.dashSpeed : window.params.walkSpeed;
+    await new Promise(resolve => {
+        const interval = setInterval(() => {
+            const dist = model.position.distanceTo(new THREE.Vector3(targetPos.x, model.position.y, targetPos.z));
+            if (dist > 0.05) { model.position.add(new THREE.Vector3().subVectors(targetPos, model.position).normalize().setY(0).multiplyScalar(speed)); }
+            if (dist <= (isBoostMode ? 0.8 : 0.1)) { clearInterval(interval); resolve(); }
+        }, 16);
+    });
+    
+    isMoving = false; flag.visible = false;
+    
+    const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
+    await turnTowards(Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z), true);
+    
+    // ★修正5: 移動完了後、確実にアイドル（アニメ1）に戻す
+    await fadeTo(animIdle, 0.5);
+    
+    isProcessing = false; resetIdleTimer();
+    debugLog("Ready.");
+}
+
+// 3 & 4. タップ判定
+function handleTapAction(event) {
+    if (!model || isProcessing) return;
+    resetIdleTimer();
+    
+    const rect = renderer.domElement.getBoundingClientRect();
+    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+    const intersectsModel = raycaster.intersectObject(model, true);
+    
+    if (intersectsModel.length > 0) {
+        if (tapResetTimer) { 
+            // ダブルタップ -> ★修正4: アニメ4実行
+            clearTimeout(tapResetTimer); 
+            tapResetTimer = null; 
+            playOnceAction();
+        }
+        else { 
+            // シングルタップ -> ★修正3: アニメ3実行
+            tapResetTimer = setTimeout(() => { 
+                tapResetTimer = null; 
+                playLoopAction("Single Tap");
+            }, 250); 
+        }
+        return;
+    }
+    
+    // 地面タップ（移動）
+    const intersects = raycaster.intersectObject(ground);
+    if (intersects.length > 0) {
+        const p = intersects[0].point.clone();
+        if (tapResetTimer) { clearTimeout(tapResetTimer); tapResetTimer = null; startNavigation(p, true); }
+        else { tapResetTimer = setTimeout(() => { tapResetTimer = null; startNavigation(p, false); }, 250); }
+    }
+}
+
+// --- Animation Control Helper ---
 async function fadeTo(next, dur) {
     if (!next || activeAction === next) return;
     if (activeAction) activeAction.fadeOut(dur);
     next.reset().setEffectiveWeight(1).fadeIn(dur).play();
     activeAction = next;
+}
+
+async function turnTowards(targetAngle, isStepping) {
+    if (isStepping) {
+        await fadeTo(animRun, 0.2);
+        while (true) {
+            let diff = targetAngle - model.rotation.y;
+            while (diff > Math.PI) diff -= Math.PI * 2; while (diff < -Math.PI) diff += Math.PI * 2;
+            if (Math.abs(diff) < 0.05) break;
+            model.rotation.y += Math.sign(diff) * 0.08; await new Promise(r => requestAnimationFrame(r));
+        }
+    } else {
+        let diff = targetAngle - model.rotation.y;
+        while (diff > Math.PI) diff -= Math.PI * 2; while (diff < -Math.PI) diff += Math.PI * 2;
+        if (Math.abs(diff) > 0.3) {
+            await fadeTo(animJump, 0.1);
+            const startRot = model.rotation.y;
+            for (let i = 0; i <= 30; i++) { model.rotation.y = startRot + (diff * (i/30)); await new Promise(r => requestAnimationFrame(r)); }
+        } else { model.rotation.y = targetAngle; }
+    }
 }
 
 function updateEmotePosition() {
@@ -196,7 +344,7 @@ function updateEmotePosition() {
     pop.style.top = `${(-(headPos.y * .5) + .5) * window.innerHeight}px`;
 }
 
-// --- Input Handling ---
+// --- Input Event Listener ---
 window.addEventListener('pointerdown', (e) => {
     if (isOpening || e.target.closest('.ui-panel') || e.target.closest('#debug-panel') || window.isModalOpen) return;
     isDragging = false; pointerDownPos.set(e.clientX, e.clientY);
@@ -210,87 +358,6 @@ window.addEventListener('pointerup', (e) => {
     if (tapStreak === 3) { window.openDebug(); tapStreak = 0; return; }
     handleTapAction(e);
 });
-
-function handleTapAction(event) {
-    if (!model || isProcessing) return;
-    resetIdleTimer();
-    const rect = renderer.domElement.getBoundingClientRect();
-    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-    raycaster.setFromCamera(mouse, camera);
-    const intersectsModel = raycaster.intersectObject(model, true);
-    
-    if (intersectsModel.length > 0) {
-        if (tapResetTimer) { 
-            // ダブルタップ時 -> アニメ3 (Index 2) を実行 (ループなし)
-            clearTimeout(tapResetTimer); 
-            tapResetTimer = null; 
-            if (specialAction) fadeTo(specialAction, 0.5);
-        }
-        else { 
-            // シングルタップ時 -> アニメ4 (Index 3) を実行 (ループ)
-            tapResetTimer = setTimeout(() => { 
-                tapResetTimer = null; 
-                if (idlingAction) fadeTo(idlingAction, 0.5);
-            }, 250); 
-        }
-        return;
-    }
-    const intersects = raycaster.intersectObject(ground);
-    if (intersects.length > 0) {
-        const p = intersects[0].point.clone();
-        if (tapResetTimer) { clearTimeout(tapResetTimer); tapResetTimer = null; startNavigation(p, true); }
-        else { tapResetTimer = setTimeout(() => { tapResetTimer = null; startNavigation(p, false); }, 250); }
-    }
-}
-
-// --- Actions ---
-function resetIdleTimer() { if (idleTimer) clearTimeout(idleTimer); idleTimer = setTimeout(() => playIdlingAction("Idle Timeout"), 30000); }
-async function playIdlingAction(src) { if (isProcessing || isMoving || !idlingAction) return; await fadeTo(idlingAction, 0.5); }
-
-async function startNavigation(targetPos, boost) {
-    isProcessing = true; isBoostMode = boost;
-    flag.position.copy(targetPos); flag.children[1].material.color.set(isBoostMode ? 0xffd700 : 0xff4757); flag.visible = true;
-    const toTarget = new THREE.Vector3().subVectors(targetPos, model.position);
-    await turnTowards(Math.atan2(toTarget.x, toTarget.z), false);
-    const run = actions['走行'] || Object.values(actions)[0];
-    await fadeTo(run, 0.2); isMoving = true;
-    const speed = isBoostMode ? window.params.dashSpeed : window.params.walkSpeed;
-    await new Promise(resolve => {
-        const interval = setInterval(() => {
-            const dist = model.position.distanceTo(new THREE.Vector3(targetPos.x, model.position.y, targetPos.z));
-            if (dist > 0.05) { model.position.add(new THREE.Vector3().subVectors(targetPos, model.position).normalize().setY(0).multiplyScalar(speed)); }
-            if (dist <= (isBoostMode ? 0.8 : 0.1)) { clearInterval(interval); resolve(); }
-        }, 16);
-    });
-    isMoving = false; flag.visible = false;
-    const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
-    await turnTowards(Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z), true);
-    await fadeTo(actions['Motion 0'] || Object.values(actions)[0], 0.5);
-    isProcessing = false; resetIdleTimer();
-}
-
-async function turnTowards(targetAngle, isStepping) {
-    const jump = actions['垂直ジャンプ'] || Object.values(actions)[1];
-    const run = actions['走行'] || Object.values(actions)[0];
-    if (isStepping) {
-        await fadeTo(run, 0.2);
-        while (true) {
-            let diff = targetAngle - model.rotation.y;
-            while (diff > Math.PI) diff -= Math.PI * 2; while (diff < -Math.PI) diff += Math.PI * 2;
-            if (Math.abs(diff) < 0.05) break;
-            model.rotation.y += Math.sign(diff) * 0.08; await new Promise(r => requestAnimationFrame(r));
-        }
-    } else {
-        let diff = targetAngle - model.rotation.y;
-        while (diff > Math.PI) diff -= Math.PI * 2; while (diff < -Math.PI) diff += Math.PI * 2;
-        if (Math.abs(diff) > 0.3) {
-            await fadeTo(jump, 0.1);
-            const startRot = model.rotation.y;
-            for (let i = 0; i <= 30; i++) { model.rotation.y = startRot + (diff * (i/30)); await new Promise(r => requestAnimationFrame(r)); }
-        } else { model.rotation.y = targetAngle; }
-    }
-}
 
 // --- Main Loop ---
 function animate() {
