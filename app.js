@@ -77,15 +77,13 @@ scene.add(ground);
 
 // --- Core Variables ---
 let mixer, model, blobShadow, flag;
-let actions = {}; 
 let activeAction = null; 
 
-// ★重要: アニメーション役割定義
+// ★重要: アニメーション変数を定義
 let animRun = null;   // Index 0: 走行
-// Index 1: ジャンプ (今回は未使用)
-let animLoop = null;  // Index 2: アニメーション3 (ループ再生用)
-let animOnce = null;  // Index 3: アニメーション4 (ワンショット用)
-let animIdle = null;  // Index 4: アニメーション5 (Null/待機用)
+let animLoop = null;  // Index 2: アニメ3 (ループ)
+let animOnce = null;  // Index 3: アニメ4 (ワンショット)
+let animIdle = null;  // Index 4: アニメ5 (停止/待機)
 
 let idleTimer = null;
 let isProcessing = false, isMoving = false, isBoostMode = false, isOpening = true, isDragging = false;
@@ -129,37 +127,32 @@ new GLTFLoader().load('./model.glb', (gltf) => {
     scene.add(model);
     
     mixer = new THREE.AnimationMixer(model);
-    const actionList = [];
-    
-    // 全アニメーションを配列化
-    gltf.animations.forEach((clip, i) => { 
-        const action = mixer.clipAction(clip);
-        actions[clip.name || `Motion${i}`] = action;
-        actionList.push(action);
-        // デバッグ: どのアニメーションが何番目かログ出力
-        console.log(`Index[${i}]: ${clip.name}`);
+    const actions = [];
+    gltf.animations.forEach((clip) => { 
+        actions.push(mixer.clipAction(clip)); 
     });
     
-    // --- ★アニメーション割り当て (Index指定) ---
-    // もし順序がズレている場合は、ここの数字を書き換えてください
-    
-    if (actionList.length > 0) animRun = actionList[0]; // 走行
-    if (actionList.length > 2) {
-        animLoop = actionList[2]; // アニメ3
-        animLoop.setLoop(THREE.LoopRepeat);
+    // --- アニメーション割り当て ---
+    // ご指定の通り、インデックス順で厳密に割り当てます
+    animRun  = actions[0]; // 走行
+    // actions[1] はジャンプ（未使用）
+    animLoop = actions[2]; // アニメ3 (ループ)
+    animOnce = actions[3]; // アニメ4 (ワンショット)
+    animIdle = actions[4]; // アニメ5 (停止)
+
+    // 安全策: もしアニメ5がなければ 0 を待機にする
+    if (!animIdle) {
+        console.warn("Index 4 (Anim5) not found. Using Index 0 as Idle.");
+        animIdle = actions[0];
     }
-    if (actionList.length > 3) {
-        animOnce = actionList[3]; // アニメ4
+
+    // ループ設定
+    if (animRun) animRun.setLoop(THREE.LoopRepeat);
+    if (animLoop) animLoop.setLoop(THREE.LoopRepeat);
+    if (animIdle) animIdle.setLoop(THREE.LoopRepeat);
+    if (animOnce) {
         animOnce.setLoop(THREE.LoopOnce);
         animOnce.clampWhenFinished = true;
-    }
-    if (actionList.length > 4) {
-        animIdle = actionList[4]; // アニメ5 (待機/Null)
-        animIdle.setLoop(THREE.LoopRepeat);
-    } else {
-        // アニメ5がない場合のフォールバック（アニメ3や0を使うなど）
-        console.warn("Animation 5 not found! Fallback to 0.");
-        animIdle = actionList[0];
     }
 
     runOpeningSequence();
@@ -167,24 +160,23 @@ new GLTFLoader().load('./model.glb', (gltf) => {
 
 // --- Actions ---
 
-// 1. オープニング処理
+// 1. オープニング
 async function runOpeningSequence() {
     debugLog("Opening...");
     model.position.set(0, 0, -12);
     model.rotation.set(0, 0, 0);
     camera.position.set(0, 1.5, 4);
-    controls.target.set(0, 0.8, -12); 
-    controls.update();
+    controls.target.set(0, 0.8, -12); controls.update();
     
-    // ★リロード時: アニメーション3 (Index 2) を実行
-    const startAnim = animLoop || animRun;
+    // リロード時: アニメーション3 (ループ) を再生
+    const startAnim = animLoop || animIdle;
     startAnim.reset().play(); 
     activeAction = startAnim;
     
     // 2秒待機
     await new Promise(r => setTimeout(r, 2000));
     
-    // ！表示
+    // ポップ表示
     const pop = document.getElementById('emote-pop'); 
     pop.style.display = 'block'; updateEmotePosition();
     await new Promise(r => setTimeout(r, 1000)); pop.style.display = 'none';
@@ -200,10 +192,10 @@ async function runOpeningSequence() {
     }
     isMoving = false;
     
-    // ★終了後: アニメーション5 (Index 4) へ遷移
+    // ★重要: 移動終了 -> アニメーション5 (停止) へ遷移
     await fadeTo(animIdle, 0.3);
 
-    // カメラ注視点更新
+    // カメラ位置は動かさず、注視点のみ更新
     controls.target.set(0, 0.5, -2); 
     controls.update();
 
@@ -213,23 +205,25 @@ async function runOpeningSequence() {
     debugLog("Ready.");
 }
 
-// 2. 待機タイマー (30秒後 -> アニメ3)
+// 2. 待機タイマー
 function resetIdleTimer() { 
     if (idleTimer) clearTimeout(idleTimer); 
+    // 放置時: アニメーション3 (ループ)
     idleTimer = setTimeout(() => playLoopAction("Idle Timeout"), 30000); 
 }
 
-// アニメ3実行 (ループ)
+// 3. シングルタップ (アニメ3 ループ)
 async function playLoopAction(src) { 
     if (isProcessing || isMoving || !animLoop) return; 
-    debugLog(`Action3: ${src}`); 
+    debugLog(`Loop: ${src}`); 
     await fadeTo(animLoop, 0.5); 
+    // ループなので自動停止はしない
 }
 
-// アニメ4実行 (1回のみ) -> 終了後 アニメ5
+// 4. ダブルタップ (アニメ4 ワンショット -> アニメ5)
 async function playOnceAction() {
     if (isProcessing || isMoving || !animOnce) return;
-    debugLog("Action4: OneShot");
+    debugLog("OneShot: Anim4");
     isProcessing = true;
     resetIdleTimer();
 
@@ -238,18 +232,18 @@ async function playOnceAction() {
 
     await fadeTo(animOnce, 0.2);
     
-    // アニメーション時間分待機
     const duration = animOnce.getClip().duration;
+    // 再生終了を待つ
     await new Promise(r => setTimeout(r, duration * 1000));
     
-    // ★終了後: アニメ5 (待機) へ戻る
+    // ★重要: 終了後 -> アニメーション5 (停止) へ遷移
     await fadeTo(animIdle, 0.5);
     
     isProcessing = false;
     resetIdleTimer();
 }
 
-// 5. 移動処理 -> 終了後 アニメ5
+// 5. 移動処理 (アニメ1 -> アニメ5)
 async function startNavigation(targetPos, boost) {
     isProcessing = true; isBoostMode = boost;
     flag.position.copy(targetPos); flag.children[1].material.color.set(isBoostMode ? 0xffd700 : 0xff4757); flag.visible = true;
@@ -274,22 +268,35 @@ async function startNavigation(targetPos, boost) {
     const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
     await turnTowards(Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z), true);
     
-    // ★終了後: アニメ5 (待機) へ遷移
+    // ★重要: 移動終了 -> アニメーション5 (停止) へ遷移
     await fadeTo(animIdle, 0.5);
     
     isProcessing = false; resetIdleTimer();
     debugLog("Ready.");
 }
 
-// --- Animation Helper ---
+// --- Animation Control Helper ---
 async function fadeTo(next, dur) {
-    if (!next || activeAction === next) return;
-    if (activeAction) activeAction.fadeOut(dur);
+    if (!next) return;
+    if (activeAction === next) return;
+    
+    // 前のアクションがあればフェードアウト
+    if (activeAction) {
+        activeAction.fadeOut(dur);
+    }
+    
+    // 新しいアクションをリセットして再生
     next.reset().setEffectiveWeight(1).fadeIn(dur).play();
     activeAction = next;
+    
+    // フェード完了待ち（任意）
+    await new Promise(r => setTimeout(r, dur * 1000));
 }
 
 async function turnTowards(targetAngle, isStepping) {
+    // 向き変更中も アニメ5 (停止) のままで良い場合は isStepping=false 側を通る
+    // 足踏みが必要なら isStepping=true
+    
     if (isStepping) {
         await fadeTo(animRun, 0.2);
         while (true) {
@@ -299,19 +306,15 @@ async function turnTowards(targetAngle, isStepping) {
             model.rotation.y += Math.sign(diff) * 0.08; await new Promise(r => requestAnimationFrame(r));
         }
     } else {
-        // ジャンプなしでその場で回転 (アニメ5のまま回る)
+        // その場で回転
         let diff = targetAngle - model.rotation.y;
         while (diff > Math.PI) diff -= Math.PI * 2; while (diff < -Math.PI) diff += Math.PI * 2;
-        // 回転が速すぎると違和感がある場合はここで補間アニメーションを入れる
-        // 今回はシンプルに値を代入
-        if (Math.abs(diff) > 0.1) {
-             const startRot = model.rotation.y;
-             for (let i = 0; i <= 20; i++) { 
-                 model.rotation.y = startRot + (diff * (i/20)); 
-                 await new Promise(r => requestAnimationFrame(r)); 
-             }
-        } else {
-            model.rotation.y = targetAngle;
+        
+        // 滑らかに回転
+        const startRot = model.rotation.y;
+        for (let i = 0; i <= 15; i++) { 
+            model.rotation.y = startRot + (diff * (i/15)); 
+            await new Promise(r => requestAnimationFrame(r)); 
         }
     }
 }
@@ -352,15 +355,13 @@ function handleTapAction(event) {
     
     if (intersectsModel.length > 0) {
         if (tapResetTimer) { 
-            // ダブルタップ -> アニメ4 (1回)
             clearTimeout(tapResetTimer); 
             tapResetTimer = null; 
-            playOnceAction(); 
+            playOnceAction(); // ダブルタップ -> アニメ4 -> アニメ5
         } else { 
-            // シングルタップ -> アニメ3 (ループ)
             tapResetTimer = setTimeout(() => { 
                 tapResetTimer = null; 
-                playLoopAction("Single Tap"); 
+                playLoopAction("Single Tap"); // シングルタップ -> アニメ3 (ループ)
             }, 250); 
         }
         return;
