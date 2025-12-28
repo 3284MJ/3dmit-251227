@@ -278,14 +278,18 @@
         // --- リセット関数（デバッグ用） ---
         window.resetCamera = function() {
             camera.position.copy(DEFAULT_CAM_POS);
-            controls.target.set(0, 0, 0); // 仮のリセット
+            if (model) {
+                // モデルがいればモデルの重心を見る
+                controls.target.copy(model.position).setY(0.5);
+            } else {
+                controls.target.set(0, 0, 0);
+            }
             controls.update();
             debugLog("Camera Reset.");
         };
 
         window.resetModel = function() {
             if (!model) return;
-            // アニメーションなどをリセット
             if (activeAction) activeAction.fadeOut(0.2);
             isMoving = false;
             isProcessing = false;
@@ -294,8 +298,7 @@
             model.position.set(0, 0, 0);
             model.rotation.set(0, 0, 0);
             
-            // 待機モーションへ
-            const idle = actions['Motion 0'] || Object.values(actions)[0]; // 決め打ち
+            const idle = actions['Motion 0'] || Object.values(actions)[0];
             if (idle) {
                 idle.reset().play();
                 activeAction = idle;
@@ -306,7 +309,6 @@
             
             debugLog("Model Reset.");
         };
-
 
         // --- オブジェクト生成 ---
         function createShadowTexture() {
@@ -428,14 +430,12 @@
             if (intersects.length > 0) {
                 const point = intersects[0].point.clone();
                 
-                // ダブルタップ判定用のタイマー制御
+                // ダブルタップ判定
                 if (tapResetTimer) {
-                    // 2回目のタップ（ダッシュ）
                     clearTimeout(tapResetTimer);
                     tapResetTimer = null;
                     startNavigation(point, true);
                 } else {
-                    // 1回目のタップ待ち（歩き）
                     tapResetTimer = setTimeout(() => {
                         tapResetTimer = null;
                         startNavigation(point, false);
@@ -593,13 +593,12 @@
                 }
 
                 // ★カメラターゲット制御★
-                // 条件: 移動中ではなく(isMovingがfalse)、かつドラッグ操作中ではない場合のみ追従
-                if (!isMoving && !isDragging) {
+                // 条件: ユーザーが手動でカメラをドラッグ操作していない間は、常に重心を追いかける
+                if (!isDragging) {
                     const targetPos = model.position.clone().setY(0.5); // 重心付近(Y=0.5)
                     // 補間係数0.1で滑らかに追従
                     controls.target.lerp(targetPos, 0.1);
                 }
-                // isMoving=true の間は update されないので、"直前の位置" が維持される
             }
 
             controls.update();
