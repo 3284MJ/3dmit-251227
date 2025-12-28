@@ -105,11 +105,10 @@
             100% { transform: scale(1) translateY(0); opacity: 1; }
         }
 
-        /* --- アクションメニュー（サッカーボール用） --- */
+        /* --- アクションメニュー --- */
         #action-menu {
             display: none;
             position: absolute;
-            /* モデルの近くに出すためJSで制御 */
             background: white;
             padding: 5px;
             border-radius: 8px;
@@ -138,7 +137,7 @@
     <div id="emote-pop">！</div>
 
     <div id="action-menu">
-        <div class="action-item" onclick="onSoccerBallSelect()">サッカーボール</div>
+        <div class="action-item" onclick="window.triggerSoccerBall()">サッカーボール</div>
     </div>
 
     <div id="help-modal" class="modal-overlay">
@@ -247,12 +246,14 @@
             else if (key === 'dash') { window.params.dashSpeed = num; document.getElementById('val-dash').innerText = num.toFixed(2); }
         };
 
-        // --- アクションメニュー制御 ---
+        // メニュー閉じる
         window.closeActionMenu = function() {
             document.getElementById('action-menu').style.display = 'none';
         }
-        // グローバル関数として定義（HTMLから呼ぶため）
-        window.onSoccerBallSelect = null; 
+        
+        // ★重要: モジュール外から呼び出せるように空の関数を定義しておく
+        window.triggerSoccerBall = function() { console.log("Not loaded yet"); };
+
     </script>
 
     <script type="module">
@@ -296,7 +297,7 @@
         let activeAction = null; 
         
         let idlingAction = null;
-        let ballAction = null; // サッカーボール取り出しアクション
+        let ballAction = null; // アニメーション4番
         let idleTimer = null;
         
         let soccerBallModel = null;
@@ -315,8 +316,6 @@
         let pointerDownPos = new THREE.Vector2();
         let isDragging = false;
         
-        // モデルダブルクリック用
-        let modelTapCount = 0;
         let modelTapTimer = null;
 
         const raycaster = new THREE.Raycaster();
@@ -349,7 +348,7 @@
                 idle.reset().play();
                 activeAction = idle;
             }
-            if (soccerBallModel) soccerBallModel.visible = false; // ボールも隠す
+            if (soccerBallModel) soccerBallModel.visible = false; 
             controls.target.set(0, 0.5, 0);
             debugLog("Model Reset.");
         };
@@ -403,75 +402,73 @@
         
         loader.load('./model.glb', (gltf) => {
             model = gltf.scene;
-            model.traverse(c => { 
-                if(c.isMesh) c.castShadow = true; 
-            });
+            model.traverse(c => { if(c.isMesh) c.castShadow = true; });
             scene.add(model);
             
-            // ボーンを探して保持しておく（右手の骨）
-            // 一般的なMixamoリグの名前: 'mixamorigRightHand' or 'RightHand'
+            // ボーン取得
             rightHandBone = model.getObjectByName('mixamorigRightHand') || model.getObjectByName('RightHand') || model.getObjectByName('Hand.R');
-            if (!rightHandBone) {
-                console.warn("Right hand bone not found! Logging all bone names:");
-                model.traverse(o => { if(o.isBone) console.log(o.name); });
-            }
 
             mixer = new THREE.AnimationMixer(model);
             gltf.animations.forEach((clip, i) => {
                 actions[clip.name || `Motion${i}`] = mixer.clipAction(clip);
             });
             
-            // アクション割り当て
             const actionValues = Object.values(actions);
+            // 3番目(index2) = アイドリング
             if (actionValues.length > 2) {
                 idlingAction = actionValues[2];
                 idlingAction.setLoop(THREE.LoopRepeat);
             }
+            // 4番目(index3) = ボール取り出し
             if (actionValues.length > 3) {
-                ballAction = actionValues[3]; // 4番目のアニメーション
+                ballAction = actionValues[3];
                 ballAction.setLoop(THREE.LoopOnce);
                 ballAction.clampWhenFinished = true;
+            } else {
+                console.warn("Animation 4 not found. Total:", actionValues.length);
             }
             
             runOpeningSequence();
         });
 
-        // サッカーボールロード（選択時に呼ばれる）
+        // サッカーボールロード
         function loadSoccerBall() {
-            if (soccerBallModel) return; // 既にロード済み
+            if (soccerBallModel) return; 
             loader.load('./soccer_ball.glb', (gltf) => {
                 soccerBallModel = gltf.scene;
-                soccerBallModel.scale.set(0.2, 0.2, 0.2); // サイズ調整
-                soccerBallModel.traverse(c => { if(c.isMesh) c.castShadow = true; });
-                
-                // 初期状態は非表示
-                soccerBallModel.visible = false;
+                soccerBallModel.scale.set(0.2, 0.2, 0.2); 
+                soccerBallModel.visible = false; // 最初は隠す
 
-                // 右手のボーンが見つかっていればアタッチ、なければシーンに追加
                 if (rightHandBone) {
                     rightHandBone.add(soccerBallModel);
-                    // 手のひらに合うように位置調整（必要に応じて調整してください）
                     soccerBallModel.position.set(0.1, 0.05, 0.05); 
                 } else {
                     scene.add(soccerBallModel);
                 }
-            });
+            }, undefined, (e) => console.error("Ball load failed", e));
         }
 
-        // --- サッカーボール選択時の処理 ---
-        window.onSoccerBallSelect = async function() {
+        // --- ★サッカーボール選択時の実行関数 ---
+        // モジュール内で定義し、windowオブジェクトに紐付ける
+        window.triggerSoccerBall = async function() {
             window.closeActionMenu();
             if (isProcessing || isMoving) return;
-            if (!ballAction) { debugLog("Animation 4 not found"); return; }
+            
+            // アニメーションがない場合のガード
+            if (!ballAction) {
+                debugLog("Err: No Animation 4");
+                // もし4番目がなくても3番目があれば代用するなどの処理が可能ですが、今回は警告のみ
+                return; 
+            }
             
             isProcessing = true;
             resetIdleTimer();
-            debugLog("Item: Soccer Ball");
+            debugLog("Action: Soccer Ball");
 
-            // 1. サッカーボール読み込み（未ロードなら）
+            // 1. ボール読み込み (エラーがあっても止まらないように非同期で投げっぱなしにする)
             loadSoccerBall();
 
-            // 2. カメラのほうを向く（足踏み回転）
+            // 2. カメラの方を向く
             const camPos = new THREE.Vector3();
             camera.getWorldPosition(camPos);
             await turnTowards(Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z), true);
@@ -479,22 +476,21 @@
             // 3. アニメーション再生
             await fadeTo(ballAction, 0.3);
 
-            // 4. アニメーションに合わせてボールを表示させる演出
-            // ※本来はアニメーションイベントを使いますが、簡易的にタイマーで制御
-            if (soccerBallModel) {
-                soccerBallModel.visible = false;
-                // 例えば背中に手を回したタイミング(0.5秒後とか)で表示
-                setTimeout(() => {
-                    if (activeAction === ballAction) soccerBallModel.visible = true;
-                }, 800); 
-            }
+            // 4. ボール表示タイミング調整 (0.5秒後に表示)
+            setTimeout(() => {
+                if (soccerBallModel && activeAction === ballAction) {
+                    soccerBallModel.visible = true;
+                }
+            }, 500);
 
-            // アニメーション終了待ち
-            await new Promise(r => setTimeout(r, ballAction.getClip().duration * 1000));
+            // アニメーション終了待ち (秒数分待機)
+            const duration = ballAction.getClip().duration;
+            await new Promise(r => setTimeout(r, duration * 1000));
             
-            // 終了後、少し待ってアイドリングへ戻る（ボールは持ったまま）
+            // 5. 終了後の待機
             await new Promise(r => setTimeout(r, 1000));
             
+            // 6. 待機ポーズへ戻る
             const idle = actions['Motion 0'] || Object.values(actions)[0];
             await fadeTo(idle, 0.5);
             
@@ -502,9 +498,9 @@
             resetIdleTimer();
         };
 
-        // --- ★オープニングシーケンス（修正版） ---
+        // --- オープニングシーケンス ---
         async function runOpeningSequence() {
-            debugLog("Opening: Initializing...");
+            debugLog("Opening...");
             
             model.position.set(0, 0, -12);
             model.rotation.set(0, 0, 0);
@@ -513,7 +509,7 @@
             controls.target.set(0, 0.8, -12);
             controls.update();
 
-            // アイドリング（アニメ3）をループ再生
+            // アイドリングループ
             let startAnim = actions['Motion 0'] || Object.values(actions)[0];
             if (idlingAction) startAnim = idlingAction;
             
@@ -521,10 +517,9 @@
             activeAction = startAnim;
 
             // 2秒待機
-            debugLog("Opening: Wait 2s...");
             await new Promise(r => setTimeout(r, 2000));
 
-            // 「！」表示
+            // ！表示
             const pop = document.getElementById('emote-pop');
             pop.style.display = 'block';
             updateEmotePosition(); 
@@ -532,11 +527,9 @@
             await new Promise(r => setTimeout(r, 500));
             pop.style.display = 'none';
 
-            // ★追加：0.5秒待機
             await new Promise(r => setTimeout(r, 500));
 
-            // 走行開始
-            debugLog("Opening: Running...");
+            // 走行
             const run = actions['走行'] || Object.values(actions)[0];
             await fadeTo(run, 0.2);
             
@@ -546,9 +539,7 @@
 
             while (model.position.z < targetZ) {
                 model.position.z += runSpeed;
-                if (Math.random() > 0.7) {
-                    createSmoke(model.position.clone().add(new THREE.Vector3(0,0,-0.5)));
-                }
+                if (Math.random() > 0.7) createSmoke(model.position.clone().add(new THREE.Vector3(0,0,-0.5)));
                 controls.target.set(0, 0.8, model.position.z);
                 controls.update();
                 await new Promise(r => requestAnimationFrame(r));
@@ -556,17 +547,16 @@
 
             isMoving = false;
 
-            // ★修正：確実に停止させる
-            // 現在のアクションを停止し、即座に通常待機モーションへ
-            if (activeAction) activeAction.stop();
+            // ★完全停止処理
+            mixer.stopAllAction(); // 全停止
+            
             const idle = actions['Motion 0'] || Object.values(actions)[0];
-            idle.reset().play();
+            idle.reset().play(); // 待機モーション再生
             activeAction = idle;
             
-            // 念のためミキサー全体の時間を進めて更新
-            mixer.update(0);
+            mixer.update(0); // 描画更新
 
-            debugLog("Ready!");
+            // カメラ移動
             const startCamPos = camera.position.clone();
             const endCamPos = DEFAULT_CAM_POS.clone();
             const steps = 60;
@@ -587,6 +577,7 @@
             isOpening = false;
             controls.enabled = true;
             resetIdleTimer();
+            debugLog("Ready!");
         }
 
         function updateEmotePosition() {
@@ -604,7 +595,7 @@
         // --- 入力イベント ---
         window.addEventListener('pointerdown', (e) => {
             if (isOpening) return;
-            window.closeActionMenu(); // メニューを閉じる
+            window.closeActionMenu();
             if (e.target.closest('.ui-panel') || e.target.closest('#debug-panel') || e.target.closest('#action-menu') || window.isModalOpen) return;
             isDragging = false;
             pointerDownPos.set(e.clientX, e.clientY);
@@ -621,7 +612,6 @@
             if (e.target.closest('.ui-panel') || e.target.closest('#debug-panel') || e.target.closest('#action-menu') || window.isModalOpen) return;
             if (isDragging) return;
 
-            // トリプルタップ(デバッグ)
             const now = Date.now();
             if (now - lastTapTime < 350) tapStreak++;
             else tapStreak = 1;
@@ -643,16 +633,16 @@
             // モデル判定
             const intersectsModel = raycaster.intersectObject(model, true);
             if (intersectsModel.length > 0) {
-                // ★ダブルタップ判定（モデル上のみ）
+                // ダブルタップ判定
                 if (modelTapTimer) {
                     clearTimeout(modelTapTimer);
                     modelTapTimer = null;
-                    // Double Tap Action -> Show Menu
+                    // Double Tap -> Menu
                     showActionMenu(event.clientX, event.clientY);
                 } else {
                     modelTapTimer = setTimeout(() => {
                         modelTapTimer = null;
-                        // Single Tap Action -> Play Idling
+                        // Single Tap -> Idling
                         playIdlingAction("Tap on Model");
                     }, 250);
                 }
@@ -676,12 +666,11 @@
             }
         }
 
-        // アクションメニュー表示
         function showActionMenu(x, y) {
             const menu = document.getElementById('action-menu');
             menu.style.display = 'block';
             menu.style.left = x + 'px';
-            menu.style.top = (y - 50) + 'px'; // 少し上に表示
+            menu.style.top = (y - 50) + 'px';
             debugLog("Menu Opened");
         }
 
