@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-// --- Global Variables & Parameters ---
+// --- Global Variables ---
 window.params = { walkSpeed: 0.06, dashSpeed: 0.12 };
 
 // --- UI Logic ---
@@ -22,7 +22,7 @@ window.showList = () => {
     const titleEl = document.getElementById('modal-title');
     detailEl.style.display = 'none'; listEl.style.display = 'flex'; listEl.style.flexDirection = 'column'; listEl.style.gap = '8px';
     titleEl.innerText = '操作説明メニュー'; listEl.innerHTML = '';
-    helpContent.forEach((item, index) => {
+    helpContent.forEach((item) => {
         const div = document.createElement('div');
         div.className = 'help-list-item';
         div.innerHTML = `${item.title} <span>▶</span>`;
@@ -45,7 +45,11 @@ window.updateParam = (key, val) => {
 
 // --- Three.js Setup ---
 const statusEl = document.getElementById('status-log');
-function debugLog(msg) { statusEl.innerText = "Status: " + msg; console.log(msg); }
+function debugLog(msg) { 
+    // 画面上のログ更新
+    statusEl.innerHTML = msg.replace(/\n/g, '<br>');
+    console.log(msg); 
+}
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xe0e0e0);
@@ -79,11 +83,11 @@ scene.add(ground);
 let mixer, model, blobShadow, flag;
 let activeAction = null; 
 
-// ★重要: アニメーション変数を定義
-let animRun = null;   // Index 0: 走行
-let animLoop = null;  // Index 2: アニメ3 (ループ)
-let animOnce = null;  // Index 3: アニメ4 (ワンショット)
-let animIdle = null;  // Index 4: アニメ5 (停止/待機)
+// Animation Roles (役職)
+let animRun = null;   // 走行
+let animLoop = null;  // 待機ループ (アニメ3)
+let animOnce = null;  // ワンショット (アニメ4)
+let animIdle = null;  // 完全停止/基本姿勢 (アニメ5: neutral)
 
 let idleTimer = null;
 let isProcessing = false, isMoving = false, isBoostMode = false, isOpening = true, isDragging = false;
@@ -120,58 +124,100 @@ function createFlag() {
 }
 flag = createFlag(); scene.add(flag);
 
-// --- Initialization ---
-new GLTFLoader().load('./model.glb', (gltf) => {
+// --- Initialization with Keyword Search ---
+const modelUrl = './model.glb?v=' + Date.now(); // キャッシュ回避
+
+new GLTFLoader().load(modelUrl, (gltf) => {
     model = gltf.scene;
     model.traverse(c => { if(c.isMesh) c.castShadow = true; });
     scene.add(model);
     
     mixer = new THREE.AnimationMixer(model);
-    const actions = [];
-    gltf.animations.forEach((clip) => { 
-        actions.push(mixer.clipAction(clip)); 
-    });
     
-    // --- アニメーション割り当て ---
-    // ご指定の通り、インデックス順で厳密に割り当てます
-    animRun  = actions[0]; // 走行
-    // actions[1] はジャンプ（未使用）
-    animLoop = actions[2]; // アニメ3 (ループ)
-    animOnce = actions[3]; // アニメ4 (ワンショット)
-    animIdle = actions[4]; // アニメ5 (停止)
+    // 全アクションをマップ化
+    const actionMap = {};
+    const actionList = []; // フォールバック用のリスト
+    
+    let logMsg = `Loaded ${gltf.animations.length} animations:\n`;
+    
+    gltf.animations.forEach((clip, i) => {
+        const action = mixer.clipAction(clip);
+        actionMap[clip.name] = action;
+        actionList.push(action);
+        logMsg += `[${i}] ${clip.name}\n`;
+    });
+    console.log(logMsg);
 
-    // 安全策: もしアニメ5がなければ 0 を待機にする
+    // ★検索ヘルパー関数
+    const find = (keywords) => {
+        // キーワード配列のどれか1つでも名前に含まれていればヒット
+        const hitKey = Object.keys(actionMap).find(name => {
+            const lowerName = name.toLowerCase();
+            return keywords.some(k => lowerName.includes(k.toLowerCase()));
+        });
+        return hitKey ? actionMap[hitKey] : null;
+    };
+
+    // --- 役職への割り当て (キーワード指定) ---
+    // Blenderでの名前の一部を指定してください
+    
+    // 1. 停止/基本 (アニメ5)
+    // "neutral", "stop", "idle" などが含まれているものを探す
+    animIdle = find(['neutral', 'stop', 'idle']);
     if (!animIdle) {
-        console.warn("Index 4 (Anim5) not found. Using Index 0 as Idle.");
-        animIdle = actions[0];
+        // 見つからなければ、リストの最後(恐らく最新に追加したもの)を使う等の策
+        console.warn("Idle(Neutral) animation not found by name. Using last index.");
+        animIdle = actionList[actionList.length - 1]; 
     }
 
-    // ループ設定
-    if (animRun) animRun.setLoop(THREE.LoopRepeat);
+    // 2. 走行 (アニメ1)
+    animRun = find(['run', 'walk', '走行']);
+    if (!animRun) animRun = actionList[0]; // なければ最初のアニメ
+
+    // 3. ループアクション (アニメ3)
+    animLoop = find(['loop', 'wait', 'idling']);
+    if (!animLoop && actionList.length > 2) animLoop = actionList[2];
+
+    // 4. ワンショット (アニメ4)
+    animOnce = find(['once', 'shot', 'soccer', 'kick']);
+    if (!animOnce && actionList.length > 3) animOnce = actionList[3];
+
+    // --- ループ設定の適用 ---
+    if (animRun)  animRun.setLoop(THREE.LoopRepeat);
     if (animLoop) animLoop.setLoop(THREE.LoopRepeat);
-    if (animIdle) animIdle.setLoop(THREE.LoopRepeat);
+    if (animIdle) animIdle.setLoop(THREE.LoopRepeat); // 基本姿勢はループさせる
     if (animOnce) {
         animOnce.setLoop(THREE.LoopOnce);
         animOnce.clampWhenFinished = true;
     }
+
+    // デバッグログ
+    console.log("--- Assigned Actions ---");
+    console.log("Run:", animRun ? animRun.getClip().name : "None");
+    console.log("Loop:", animLoop ? animLoop.getClip().name : "None");
+    console.log("Once:", animOnce ? animOnce.getClip().name : "None");
+    console.log("Idle:", animIdle ? animIdle.getClip().name : "None");
 
     runOpeningSequence();
 });
 
 // --- Actions ---
 
-// 1. オープニング
+// 1. オープニング処理
 async function runOpeningSequence() {
     debugLog("Opening...");
     model.position.set(0, 0, -12);
     model.rotation.set(0, 0, 0);
     camera.position.set(0, 1.5, 4);
-    controls.target.set(0, 0.8, -12); controls.update();
+    controls.target.set(0, 0.8, -12); 
+    controls.update();
     
-    // リロード時: アニメーション3 (ループ) を再生
+    // リロード時: ループアクション(アニメ3)から開始
     const startAnim = animLoop || animIdle;
-    startAnim.reset().play(); 
-    activeAction = startAnim;
+    if(startAnim) {
+        startAnim.reset().play(); 
+        activeAction = startAnim;
+    }
     
     // 2秒待機
     await new Promise(r => setTimeout(r, 2000));
@@ -192,10 +238,9 @@ async function runOpeningSequence() {
     }
     isMoving = false;
     
-    // ★重要: 移動終了 -> アニメーション5 (停止) へ遷移
+    // ★終了後: アニメ5 (Idle) へ遷移
     await fadeTo(animIdle, 0.3);
 
-    // カメラ位置は動かさず、注視点のみ更新
     controls.target.set(0, 0.5, -2); 
     controls.update();
 
@@ -208,42 +253,42 @@ async function runOpeningSequence() {
 // 2. 待機タイマー
 function resetIdleTimer() { 
     if (idleTimer) clearTimeout(idleTimer); 
-    // 放置時: アニメーション3 (ループ)
+    // 放置時 -> ループアクション
     idleTimer = setTimeout(() => playLoopAction("Idle Timeout"), 30000); 
 }
 
-// 3. シングルタップ (アニメ3 ループ)
+// アニメ3 (ループ)
 async function playLoopAction(src) { 
     if (isProcessing || isMoving || !animLoop) return; 
     debugLog(`Loop: ${src}`); 
     await fadeTo(animLoop, 0.5); 
-    // ループなので自動停止はしない
 }
 
-// 4. ダブルタップ (アニメ4 ワンショット -> アニメ5)
+// アニメ4 (ワンショット) -> アニメ5
 async function playOnceAction() {
     if (isProcessing || isMoving || !animOnce) return;
-    debugLog("OneShot: Anim4");
+    debugLog("OneShot!");
     isProcessing = true;
     resetIdleTimer();
 
+    // 念のため再設定
     animOnce.setLoop(THREE.LoopOnce);
     animOnce.clampWhenFinished = true;
 
     await fadeTo(animOnce, 0.2);
     
     const duration = animOnce.getClip().duration;
-    // 再生終了を待つ
+    // 再生時間を待つ
     await new Promise(r => setTimeout(r, duration * 1000));
     
-    // ★重要: 終了後 -> アニメーション5 (停止) へ遷移
+    // ★終了後 -> アニメ5 (Idle)
     await fadeTo(animIdle, 0.5);
     
     isProcessing = false;
     resetIdleTimer();
 }
 
-// 5. 移動処理 (アニメ1 -> アニメ5)
+// 移動処理 -> アニメ5
 async function startNavigation(targetPos, boost) {
     isProcessing = true; isBoostMode = boost;
     flag.position.copy(targetPos); flag.children[1].material.color.set(isBoostMode ? 0xffd700 : 0xff4757); flag.visible = true;
@@ -268,35 +313,29 @@ async function startNavigation(targetPos, boost) {
     const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
     await turnTowards(Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z), true);
     
-    // ★重要: 移動終了 -> アニメーション5 (停止) へ遷移
+    // ★終了後 -> アニメ5 (Idle)
     await fadeTo(animIdle, 0.5);
     
     isProcessing = false; resetIdleTimer();
     debugLog("Ready.");
 }
 
-// --- Animation Control Helper ---
+// --- Animation Helper ---
 async function fadeTo(next, dur) {
     if (!next) return;
     if (activeAction === next) return;
     
-    // 前のアクションがあればフェードアウト
     if (activeAction) {
         activeAction.fadeOut(dur);
     }
     
-    // 新しいアクションをリセットして再生
     next.reset().setEffectiveWeight(1).fadeIn(dur).play();
     activeAction = next;
     
-    // フェード完了待ち（任意）
     await new Promise(r => setTimeout(r, dur * 1000));
 }
 
 async function turnTowards(targetAngle, isStepping) {
-    // 向き変更中も アニメ5 (停止) のままで良い場合は isStepping=false 側を通る
-    // 足踏みが必要なら isStepping=true
-    
     if (isStepping) {
         await fadeTo(animRun, 0.2);
         while (true) {
@@ -306,15 +345,17 @@ async function turnTowards(targetAngle, isStepping) {
             model.rotation.y += Math.sign(diff) * 0.08; await new Promise(r => requestAnimationFrame(r));
         }
     } else {
-        // その場で回転
+        // 回転中
         let diff = targetAngle - model.rotation.y;
         while (diff > Math.PI) diff -= Math.PI * 2; while (diff < -Math.PI) diff += Math.PI * 2;
-        
-        // 滑らかに回転
-        const startRot = model.rotation.y;
-        for (let i = 0; i <= 15; i++) { 
-            model.rotation.y = startRot + (diff * (i/15)); 
-            await new Promise(r => requestAnimationFrame(r)); 
+        if (Math.abs(diff) > 0.1) {
+             const startRot = model.rotation.y;
+             for (let i = 0; i <= 20; i++) { 
+                 model.rotation.y = startRot + (diff * (i/20)); 
+                 await new Promise(r => requestAnimationFrame(r)); 
+             }
+        } else {
+            model.rotation.y = targetAngle;
         }
     }
 }
@@ -357,11 +398,11 @@ function handleTapAction(event) {
         if (tapResetTimer) { 
             clearTimeout(tapResetTimer); 
             tapResetTimer = null; 
-            playOnceAction(); // ダブルタップ -> アニメ4 -> アニメ5
+            playOnceAction(); 
         } else { 
             tapResetTimer = setTimeout(() => { 
                 tapResetTimer = null; 
-                playLoopAction("Single Tap"); // シングルタップ -> アニメ3 (ループ)
+                playLoopAction("Single Tap"); 
             }, 250); 
         }
         return;
