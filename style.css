@@ -1,0 +1,85 @@
+body { margin: 0; overflow: hidden; background-color: #e0e0e0; touch-action: none; font-family: sans-serif; }
+canvas { display: block; width: 100vw; height: 100vh; }
+
+.ui-panel {
+    position: absolute; left: 10px;
+    background: rgba(0,0,0,0.6); color: white;
+    padding: 8px 12px; font-family: monospace; font-size: 12px;
+    border-radius: 4px; z-index: 100;
+    backdrop-filter: blur(2px);
+    user-select: none;
+}
+
+#status-log { top: 10px; pointer-events: none; }
+
+#help-btn {
+    top: 45px; cursor: pointer; pointer-events: auto;
+    border: 1px solid rgba(255,255,255,0.3);
+    display: flex; align-items: center; gap: 5px;
+}
+#help-btn::before { content: "❓"; font-size: 14px; }
+
+/* モーダル */
+.modal-overlay {
+    display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0, 0, 0, 0.6); z-index: 2000;
+    justify-content: center; align-items: center;
+}
+.modal-card {
+    background: white; width: 85%; max-width: 320px;
+    padding: 20px; border-radius: 15px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+    display: flex; flex-direction: column; gap: 10px;
+    animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+@keyframes popIn { from { transform: scale(0.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.modal-header {
+    font-size: 18px; font-weight: bold; color: #333;
+    border-bottom: 2px solid #f0f0f0; padding-bottom: 10px; margin-bottom: 5px;
+    display: flex; justify-content: space-between; align-items: center;
+}
+.help-list-item {
+    background: #f8f9fa; padding: 12px; border-radius: 8px; cursor: pointer;
+    font-weight: bold; color: #555; display: flex; justify-content: space-between; align-items: center;
+    border: 1px solid #eee;
+}
+.detail-view { display: none; text-align: left; }
+.detail-icon { font-size: 30px; text-align: center; margin: 15px 0; display: block; }
+.btn-group { display: flex; gap: 10px; margin-top: 10px; }
+.btn { flex: 1; padding: 10px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
+.btn-close { background: #666; color: white; }
+
+/* デバッグパネル */
+#debug-panel {
+    display: none;
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 85%; max-width: 350px;
+    background: rgba(20, 20, 30, 0.95);
+    color: #00ffcc;
+    border: 1px solid #00ffcc;
+    border-radius: 10px;
+    padding: 20px;
+    z-index: 3000;
+    font-family: monospace;
+    box-shadow: 0 0 20px rgba(0, 255, 204, 0.2);
+}
+.debug-title { font-size: 16px; font-weight: bold; border-bottom: 1px dashed #00ffcc; margin-bottom: 15px; padding-bottom: 5px; text-align: center; }
+.debug-section { margin-bottom: 15px; }
+.debug-label { display: block; margin-bottom: 5px; font-size: 12px; color: #aaa; }
+.debug-row { display: flex; gap: 10px; margin-bottom: 10px; }
+.debug-btn { flex: 1; background: #333; color: white; border: 1px solid #555; padding: 8px; border-radius: 4px; cursor: pointer; font-family: monospace; }
+input[type=range] { width: 100%; accent-color: #00ffcc; }
+
+/* ポップアップ */
+#emote-pop {
+    display: none; position: absolute; font-size: 40px; font-weight: bold; color: #ff4757;
+    text-shadow: 2px 2px 0px white, -2px -2px 0px white, 2px -2px 0px white, -2px 2px 0px white;
+    pointer-events: none; z-index: 500;
+    animation: bounce 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+@keyframes bounce {
+    0% { transform: scale(0) translateY(20px); opacity: 0; }
+    50% { transform: scale(1.2) translateY(-10px); opacity: 1; }
+    100% { transform: scale(1) translateY(0); opacity: 1; }
+}
