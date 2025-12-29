@@ -46,7 +46,6 @@ window.updateParam = (key, val) => {
 // --- Three.js Setup ---
 const statusEl = document.getElementById('status-log');
 function debugLog(msg) { 
-    // 画面上のログ更新
     statusEl.innerHTML = msg.replace(/\n/g, '<br>');
     console.log(msg); 
 }
@@ -83,11 +82,11 @@ scene.add(ground);
 let mixer, model, blobShadow, flag;
 let activeAction = null; 
 
-// Animation Roles (役職)
+// Animation Roles
 let animRun = null;   // 走行
-let animLoop = null;  // 待機ループ (アニメ3)
-let animOnce = null;  // ワンショット (アニメ4)
-let animIdle = null;  // 完全停止/基本姿勢 (アニメ5: neutral)
+let animLoop = null;  // 待機ループ
+let animOnce = null;  // ワンショット (Soccer)
+let animIdle = null;  // 完全停止 (Neutral)
 
 let idleTimer = null;
 let isProcessing = false, isMoving = false, isBoostMode = false, isOpening = true, isDragging = false;
@@ -124,8 +123,8 @@ function createFlag() {
 }
 flag = createFlag(); scene.add(flag);
 
-// --- Initialization with Keyword Search ---
-const modelUrl = './model.glb?v=' + Date.now(); // キャッシュ回避
+// --- Initialization ---
+const modelUrl = './model.glb?v=' + Date.now();
 
 new GLTFLoader().load(modelUrl, (gltf) => {
     model = gltf.scene;
@@ -133,10 +132,8 @@ new GLTFLoader().load(modelUrl, (gltf) => {
     scene.add(model);
     
     mixer = new THREE.AnimationMixer(model);
-    
-    // 全アクションをマップ化
     const actionMap = {};
-    const actionList = []; // フォールバック用のリスト
+    const actionList = []; 
     
     let logMsg = `Loaded ${gltf.animations.length} animations:\n`;
     
@@ -148,9 +145,8 @@ new GLTFLoader().load(modelUrl, (gltf) => {
     });
     console.log(logMsg);
 
-    // ★検索ヘルパー関数
+    // ★検索ヘルパー
     const find = (keywords) => {
-        // キーワード配列のどれか1つでも名前に含まれていればヒット
         const hitKey = Object.keys(actionMap).find(name => {
             const lowerName = name.toLowerCase();
             return keywords.some(k => lowerName.includes(k.toLowerCase()));
@@ -158,76 +154,77 @@ new GLTFLoader().load(modelUrl, (gltf) => {
         return hitKey ? actionMap[hitKey] : null;
     };
 
-    // --- 役職への割り当て (キーワード指定) ---
-    // Blenderでの名前の一部を指定してください
+    // --- 役職への割り当て ---
     
-    // 1. 停止/基本 (アニメ5)
-    // "neutral", "stop", "idle" などが含まれているものを探す
-    animIdle = find(['neutral', 'stop', 'idle']);
-    if (!animIdle) {
-        // 見つからなければ、リストの最後(恐らく最新に追加したもの)を使う等の策
-        console.warn("Idle(Neutral) animation not found by name. Using last index.");
-        animIdle = actionList[actionList.length - 1]; 
-    }
-
-    // 2. 走行 (アニメ1)
+    // 1. 走行 (アニメ1)
     animRun = find(['run', 'walk', '走行']);
-    if (!animRun) animRun = actionList[0]; // なければ最初のアニメ
+    if (!animRun) animRun = actionList[0];
 
-    // 3. ループアクション (アニメ3)
+    // 2. ループアクション (アニメ3)
     animLoop = find(['loop', 'wait', 'idling']);
     if (!animLoop && actionList.length > 2) animLoop = actionList[2];
 
-    // 4. ワンショット (アニメ4)
+    // 3. ワンショット (アニメ4)
     animOnce = find(['once', 'shot', 'soccer', 'kick']);
     if (!animOnce && actionList.length > 3) animOnce = actionList[3];
 
-    // --- ループ設定の適用 ---
+    // 4. 停止/基本 (アニメ5: neutral)
+    // ★修正: 最優先で neutral を探す。
+    animIdle = find(['neutral', 'stop', 'idle']);
+    
+    // ★重要修正: neutralが見つからない場合、絶対に animOnce (Soccer) を使わせない。
+    // 代わりに animLoop を使う。
+    if (!animIdle) {
+        console.warn("Neutral/Idle animation not found. Fallback to Loop.");
+        animIdle = animLoop || actionList[0]; 
+    }
+
+    // --- ループ設定 ---
     if (animRun)  animRun.setLoop(THREE.LoopRepeat);
     if (animLoop) animLoop.setLoop(THREE.LoopRepeat);
-    if (animIdle) animIdle.setLoop(THREE.LoopRepeat); // 基本姿勢はループさせる
+    if (animIdle) animIdle.setLoop(THREE.LoopRepeat);
     if (animOnce) {
         animOnce.setLoop(THREE.LoopOnce);
         animOnce.clampWhenFinished = true;
     }
 
-    // デバッグログ
-    console.log("--- Assigned Actions ---");
-    console.log("Run:", animRun ? animRun.getClip().name : "None");
-    console.log("Loop:", animLoop ? animLoop.getClip().name : "None");
-    console.log("Once:", animOnce ? animOnce.getClip().name : "None");
-    console.log("Idle:", animIdle ? animIdle.getClip().name : "None");
+    // デバッグログ確認
+    let assignLog = "--- Assignments ---\n";
+    assignLog += `Run: ${animRun ? animRun.getClip().name : "None"}\n`;
+    assignLog += `Loop: ${animLoop ? animLoop.getClip().name : "None"}\n`;
+    assignLog += `Once: ${animOnce ? animOnce.getClip().name : "None"}\n`;
+    assignLog += `Idle: ${animIdle ? animIdle.getClip().name : "None"}\n`;
+    debugLog(logMsg + assignLog);
 
     runOpeningSequence();
 });
 
 // --- Actions ---
 
-// 1. オープニング処理
+// 1. オープニング
 async function runOpeningSequence() {
-    debugLog("Opening...");
+    // 位置リセット
     model.position.set(0, 0, -12);
     model.rotation.set(0, 0, 0);
     camera.position.set(0, 1.5, 4);
     controls.target.set(0, 0.8, -12); 
     controls.update();
     
-    // リロード時: ループアクション(アニメ3)から開始
+    // リロード時はループアクションから開始
     const startAnim = animLoop || animIdle;
     if(startAnim) {
         startAnim.reset().play(); 
         activeAction = startAnim;
     }
     
-    // 2秒待機
     await new Promise(r => setTimeout(r, 2000));
     
-    // ポップ表示
+    // ！表示
     const pop = document.getElementById('emote-pop'); 
     pop.style.display = 'block'; updateEmotePosition();
     await new Promise(r => setTimeout(r, 1000)); pop.style.display = 'none';
     
-    // 走行開始
+    // 走行
     await fadeTo(animRun, 0.2); 
     isMoving = true;
     while (model.position.z < -2.0) { 
@@ -238,7 +235,7 @@ async function runOpeningSequence() {
     }
     isMoving = false;
     
-    // ★終了後: アニメ5 (Idle) へ遷移
+    // ★終了後: Neutral (Idle) へ遷移
     await fadeTo(animIdle, 0.3);
 
     controls.target.set(0, 0.5, -2); 
@@ -247,48 +244,44 @@ async function runOpeningSequence() {
     isOpening = false; 
     controls.enabled = true; 
     resetIdleTimer(); 
-    debugLog("Ready.");
 }
 
 // 2. 待機タイマー
 function resetIdleTimer() { 
     if (idleTimer) clearTimeout(idleTimer); 
-    // 放置時 -> ループアクション
     idleTimer = setTimeout(() => playLoopAction("Idle Timeout"), 30000); 
 }
 
-// アニメ3 (ループ)
+// ループアクション
 async function playLoopAction(src) { 
     if (isProcessing || isMoving || !animLoop) return; 
-    debugLog(`Loop: ${src}`); 
+    // debugLog(`Loop: ${src}`); 
     await fadeTo(animLoop, 0.5); 
 }
 
-// アニメ4 (ワンショット) -> アニメ5
+// ワンショット
 async function playOnceAction() {
     if (isProcessing || isMoving || !animOnce) return;
-    debugLog("OneShot!");
+    // debugLog("OneShot!");
     isProcessing = true;
     resetIdleTimer();
 
-    // 念のため再設定
     animOnce.setLoop(THREE.LoopOnce);
     animOnce.clampWhenFinished = true;
 
     await fadeTo(animOnce, 0.2);
     
     const duration = animOnce.getClip().duration;
-    // 再生時間を待つ
     await new Promise(r => setTimeout(r, duration * 1000));
     
-    // ★終了後 -> アニメ5 (Idle)
+    // ★終了後: Neutral へ
     await fadeTo(animIdle, 0.5);
     
     isProcessing = false;
     resetIdleTimer();
 }
 
-// 移動処理 -> アニメ5
+// 移動処理
 async function startNavigation(targetPos, boost) {
     isProcessing = true; isBoostMode = boost;
     flag.position.copy(targetPos); flag.children[1].material.color.set(isBoostMode ? 0xffd700 : 0xff4757); flag.visible = true;
@@ -313,11 +306,10 @@ async function startNavigation(targetPos, boost) {
     const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
     await turnTowards(Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z), true);
     
-    // ★終了後 -> アニメ5 (Idle)
+    // ★終了後: Neutral へ
     await fadeTo(animIdle, 0.5);
     
     isProcessing = false; resetIdleTimer();
-    debugLog("Ready.");
 }
 
 // --- Animation Helper ---
@@ -345,7 +337,6 @@ async function turnTowards(targetAngle, isStepping) {
             model.rotation.y += Math.sign(diff) * 0.08; await new Promise(r => requestAnimationFrame(r));
         }
     } else {
-        // 回転中
         let diff = targetAngle - model.rotation.y;
         while (diff > Math.PI) diff -= Math.PI * 2; while (diff < -Math.PI) diff += Math.PI * 2;
         if (Math.abs(diff) > 0.1) {
@@ -364,8 +355,11 @@ function updateEmotePosition() {
     if (!model) return;
     const pop = document.getElementById('emote-pop');
     if (pop.style.display === 'none') return;
-    const headPos = model.position.clone().add(new THREE.Vector3(-0.3, 2.0, 0));
+    
+    // ★高さ修正: 2.0 -> 2.6
+    const headPos = model.position.clone().add(new THREE.Vector3(0, 2.6, 0));
     headPos.project(camera);
+    
     pop.style.left = `${(headPos.x * .5 + .5) * window.innerWidth}px`;
     pop.style.top = `${(-(headPos.y * .5) + .5) * window.innerHeight}px`;
 }
