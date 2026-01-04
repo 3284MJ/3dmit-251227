@@ -9,8 +9,8 @@ window.params = { walkSpeed: 0.06, dashSpeed: 0.12 };
 const helpContent = [
     { title: "歩いて移動", icon: "👆", desc: "地面を【1回タップ】" },
     { title: "ダッシュ移動", icon: "👆👆", desc: "地面を【2回連打】" },
-    { title: "ループアクション", icon: "🤫", desc: "ミツハシくんをタップ、または放置" },
-    { title: "ワンショット", icon: "🎒", desc: "ミツハシくんを【ダブルタップ】" }
+    { title: "リフティング開始", icon: "⚽", desc: "ミツハシくんを【ダブルタップ】" },
+    { title: "リフティング終了", icon: "🛑", desc: "リフティング中に【ダブルタップ】" }
 ];
 
 window.isModalOpen = false;
@@ -45,8 +45,9 @@ window.updateParam = (key, val) => {
 
 // --- Three.js Setup ---
 const statusEl = document.getElementById('status-log');
+// ログ出力関数: 左上には表示せず、コンソールのみに出力 (デバッグメニューには別途追加)
 function debugLog(msg) { 
-    statusEl.innerHTML = msg.replace(/\n/g, '<br>');
+    // statusEl.innerHTML = msg; // 左上表示を無効化
     console.log(msg); 
 }
 
@@ -82,11 +83,18 @@ scene.add(ground);
 let mixer, model, blobShadow, flag;
 let activeAction = null; 
 
-// Animation Roles
-let animRun = null;   // 走行
-let animLoop = null;  // 待機ループ
-let animOnce = null;  // ワンショット (Soccer)
-let animIdle = null;  // 完全停止 (Neutral)
+// Animation Roles (指定の割り当て)
+let animNeutral   = null; // 0: neutral (Idle)
+let animSwing     = null; // 1: swing
+let animJump      = null; // 2: jump
+let animRun       = null; // 3: run
+let animPick      = null; // 4: item_pick
+let animLiftStart = null; // 5: 5a_lifting (Start)
+let animLiftLoop  = null; // 6: 5b_lifting (Loop)
+let animLiftEnd   = null; // 7: 5c_lifting (End)
+
+// 状態管理フラグ
+let isLiftingLoop = false; // リフティングループ中かどうかの判定
 
 let idleTimer = null;
 let isProcessing = false, isMoving = false, isBoostMode = false, isOpening = true, isDragging = false;
@@ -132,86 +140,111 @@ new GLTFLoader().load(modelUrl, (gltf) => {
     scene.add(model);
     
     mixer = new THREE.AnimationMixer(model);
-    const actionMap = {};
-    const actionList = []; 
+    const actionList = [];
     
-    let logMsg = `Loaded ${gltf.animations.length} animations:\n`;
-    
-    gltf.animations.forEach((clip, i) => {
+    // アニメーションリスト作成
+    gltf.animations.forEach((clip) => {
         const action = mixer.clipAction(clip);
-        actionMap[clip.name] = action;
         actionList.push(action);
-        logMsg += `[${i}] ${clip.name}\n`;
     });
-    console.log(logMsg);
 
-    // ★検索ヘルパー
-    const find = (keywords) => {
-        const hitKey = Object.keys(actionMap).find(name => {
-            const lowerName = name.toLowerCase();
-            return keywords.some(k => lowerName.includes(k.toLowerCase()));
-        });
-        return hitKey ? actionMap[hitKey] : null;
+    // --- デバッグメニューへの一覧追加 ---
+    addAnimListToDebugMenu(gltf.animations);
+
+    // --- アニメーション割り当て (指定インデックス) ---
+    // [0] 0_neutral
+    // [1] 1_swing
+    // [2] 2_jump
+    // [3] 3_run
+    // [4] 4_item_pick
+    // [5] 5a_lifting
+    // [6] 5b_lifting
+    // [7] 5c_lifting
+    
+    if (actionList[0]) animNeutral   = actionList[0];
+    if (actionList[1]) animSwing     = actionList[1];
+    if (actionList[2]) animJump      = actionList[2];
+    if (actionList[3]) animRun       = actionList[3];
+    if (actionList[4]) animPick      = actionList[4];
+    if (actionList[5]) animLiftStart = actionList[5];
+    if (actionList[6]) animLiftLoop  = actionList[6];
+    if (actionList[7]) animLiftEnd   = actionList[7];
+
+    // 安全策: Neutralがない場合は0番を使う
+    if (!animNeutral) animNeutral = actionList[0];
+
+    // ループ設定
+    if (animNeutral) animNeutral.setLoop(THREE.LoopRepeat);
+    if (animRun)     animRun.setLoop(THREE.LoopRepeat);
+    if (animLiftLoop) animLiftLoop.setLoop(THREE.LoopRepeat);
+    
+    // ワンショット設定
+    const setOnce = (act) => {
+        if(act) { act.setLoop(THREE.LoopOnce); act.clampWhenFinished = true; }
     };
-
-    // --- 役職への割り当て ---
-    
-    // 1. 走行 (アニメ1)
-    animRun = find(['run', 'walk', '走行']);
-    if (!animRun) animRun = actionList[0];
-
-    // 2. ループアクション (アニメ3)
-    animLoop = find(['loop', 'wait', 'idling']);
-    if (!animLoop && actionList.length > 2) animLoop = actionList[2];
-
-    // 3. ワンショット (アニメ4)
-    animOnce = find(['once', 'shot', 'soccer', 'kick']);
-    if (!animOnce && actionList.length > 3) animOnce = actionList[3];
-
-    // 4. 停止/基本 (アニメ5: neutral)
-    // ★修正: 最優先で neutral を探す。
-    animIdle = find(['neutral', 'stop', 'idle']);
-    
-    // ★重要修正: neutralが見つからない場合、絶対に animOnce (Soccer) を使わせない。
-    // 代わりに animLoop を使う。
-    if (!animIdle) {
-        console.warn("Neutral/Idle animation not found. Fallback to Loop.");
-        animIdle = animLoop || actionList[0]; 
-    }
-
-    // --- ループ設定 ---
-    if (animRun)  animRun.setLoop(THREE.LoopRepeat);
-    if (animLoop) animLoop.setLoop(THREE.LoopRepeat);
-    if (animIdle) animIdle.setLoop(THREE.LoopRepeat);
-    if (animOnce) {
-        animOnce.setLoop(THREE.LoopOnce);
-        animOnce.clampWhenFinished = true;
-    }
-
-    // デバッグログ確認
-    let assignLog = "--- Assignments ---\n";
-    assignLog += `Run: ${animRun ? animRun.getClip().name : "None"}\n`;
-    assignLog += `Loop: ${animLoop ? animLoop.getClip().name : "None"}\n`;
-    assignLog += `Once: ${animOnce ? animOnce.getClip().name : "None"}\n`;
-    assignLog += `Idle: ${animIdle ? animIdle.getClip().name : "None"}\n`;
-    debugLog(logMsg + assignLog);
+    setOnce(animSwing);
+    setOnce(animJump);
+    setOnce(animPick);
+    setOnce(animLiftStart);
+    setOnce(animLiftEnd);
 
     runOpeningSequence();
 });
+
+// デバッグメニューにリストを追加する関数
+function addAnimListToDebugMenu(animations) {
+    const debugPanel = document.getElementById('debug-panel');
+    
+    // 既存のリストがあれば削除
+    const oldList = document.getElementById('debug-anim-list');
+    if (oldList) oldList.remove();
+
+    const section = document.createElement('div');
+    section.id = 'debug-anim-list';
+    section.className = 'debug-section';
+    section.style.marginTop = '15px';
+    section.style.borderTop = '1px dashed #00ffcc';
+    section.style.paddingTop = '10px';
+
+    const label = document.createElement('div');
+    label.className = 'debug-label';
+    label.innerText = 'ANIMATION LIST (Index : Name)';
+    section.appendChild(label);
+
+    const ul = document.createElement('ul');
+    ul.style.listStyle = 'none';
+    ul.style.padding = '0';
+    ul.style.margin = '0';
+    ul.style.fontSize = '11px';
+    ul.style.color = '#fff';
+    ul.style.maxHeight = '150px';
+    ul.style.overflowY = 'auto';
+
+    animations.forEach((clip, i) => {
+        const li = document.createElement('li');
+        li.textContent = `[${i}] : ${clip.name}`;
+        li.style.padding = '2px 0';
+        li.style.borderBottom = '1px solid #444';
+        ul.appendChild(li);
+    });
+
+    section.appendChild(ul);
+    // 閉じるボタンの前あたりに挿入
+    const closeBtn = debugPanel.querySelector('.btn-close');
+    debugPanel.insertBefore(section, closeBtn);
+}
 
 // --- Actions ---
 
 // 1. オープニング
 async function runOpeningSequence() {
-    // 位置リセット
+    debugLog("Opening...");
     model.position.set(0, 0, -12);
     model.rotation.set(0, 0, 0);
     camera.position.set(0, 1.5, 4);
-    controls.target.set(0, 0.8, -12); 
-    controls.update();
+    controls.target.set(0, 0.8, -12); controls.update();
     
-    // リロード時はループアクションから開始
-    const startAnim = animLoop || animIdle;
+    const startAnim = animNeutral;
     if(startAnim) {
         startAnim.reset().play(); 
         activeAction = startAnim;
@@ -219,12 +252,11 @@ async function runOpeningSequence() {
     
     await new Promise(r => setTimeout(r, 2000));
     
-    // ！表示
     const pop = document.getElementById('emote-pop'); 
     pop.style.display = 'block'; updateEmotePosition();
     await new Promise(r => setTimeout(r, 1000)); pop.style.display = 'none';
     
-    // 走行
+    // 走行開始
     await fadeTo(animRun, 0.2); 
     isMoving = true;
     while (model.position.z < -2.0) { 
@@ -235,8 +267,8 @@ async function runOpeningSequence() {
     }
     isMoving = false;
     
-    // ★終了後: Neutral (Idle) へ遷移
-    await fadeTo(animIdle, 0.3);
+    // 終了 -> Neutral
+    await fadeTo(animNeutral, 0.3);
 
     controls.target.set(0, 0.5, -2); 
     controls.update();
@@ -246,43 +278,70 @@ async function runOpeningSequence() {
     resetIdleTimer(); 
 }
 
-// 2. 待機タイマー
+// 2. 待機タイマー (30秒後 -> Swingでも再生してみる)
 function resetIdleTimer() { 
     if (idleTimer) clearTimeout(idleTimer); 
-    idleTimer = setTimeout(() => playLoopAction("Idle Timeout"), 30000); 
+    // 放置時アクションは今回指定がないため、Neutral維持 or Swingなどご自由に
+    // 今回はNeutral維持のためタイマー処理なし
 }
 
-// ループアクション
-async function playLoopAction(src) { 
-    if (isProcessing || isMoving || !animLoop) return; 
-    // debugLog(`Loop: ${src}`); 
-    await fadeTo(animLoop, 0.5); 
-}
+// --- リフティング制御 ---
 
-// ワンショット
-async function playOnceAction() {
-    if (isProcessing || isMoving || !animOnce) return;
-    // debugLog("OneShot!");
+// リフティング開始: 5a -> 5b (Loop)
+async function startLiftingSequence() {
+    if (isProcessing || isMoving || !animLiftStart || !animLiftLoop) return;
+    debugLog("Start Lifting");
     isProcessing = true;
     resetIdleTimer();
 
-    animOnce.setLoop(THREE.LoopOnce);
-    animOnce.clampWhenFinished = true;
-
-    await fadeTo(animOnce, 0.2);
+    // 1. 5a_lifting (Start)
+    animLiftStart.setLoop(THREE.LoopOnce);
+    animLiftStart.clampWhenFinished = true;
+    await fadeTo(animLiftStart, 0.2);
     
-    const duration = animOnce.getClip().duration;
+    // 再生待ち
+    const duration = animLiftStart.getClip().duration;
     await new Promise(r => setTimeout(r, duration * 1000));
-    
-    // ★終了後: Neutral へ
-    await fadeTo(animIdle, 0.5);
-    
-    isProcessing = false;
-    resetIdleTimer();
+
+    // 2. 5b_lifting (Loop)
+    if (activeAction === animLiftStart && !isMoving) { // 割り込み確認
+        await fadeTo(animLiftLoop, 0.1);
+        isLiftingLoop = true;
+        isProcessing = false; // ループ中は入力を受け付けるためfalse
+        debugLog("Lifting Loop...");
+    } else {
+        isProcessing = false;
+    }
 }
 
-// 移動処理
+// リフティング終了: 5c -> Neutral
+async function stopLiftingSequence() {
+    if (isMoving || !animLiftEnd) return;
+    debugLog("Stop Lifting");
+    isProcessing = true; // 終了動作中はガード
+    isLiftingLoop = false;
+
+    // 1. 5c_lifting (End)
+    animLiftEnd.setLoop(THREE.LoopOnce);
+    animLiftEnd.clampWhenFinished = true;
+    await fadeTo(animLiftEnd, 0.1);
+
+    // 再生待ち
+    const duration = animLiftEnd.getClip().duration;
+    await new Promise(r => setTimeout(r, duration * 1000));
+
+    // 2. Neutral
+    await fadeTo(animNeutral, 0.5);
+    isProcessing = false;
+}
+
+// 移動処理 (割り込み対応)
 async function startNavigation(targetPos, boost) {
+    // リフティング中なら強制解除
+    if (isLiftingLoop) {
+        isLiftingLoop = false;
+    }
+    
     isProcessing = true; isBoostMode = boost;
     flag.position.copy(targetPos); flag.children[1].material.color.set(isBoostMode ? 0xffd700 : 0xff4757); flag.visible = true;
     
@@ -306,10 +365,11 @@ async function startNavigation(targetPos, boost) {
     const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
     await turnTowards(Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z), true);
     
-    // ★終了後: Neutral へ
-    await fadeTo(animIdle, 0.5);
+    // 終了後 -> Neutral
+    await fadeTo(animNeutral, 0.5);
     
     isProcessing = false; resetIdleTimer();
+    debugLog("Ready.");
 }
 
 // --- Animation Helper ---
@@ -356,7 +416,6 @@ function updateEmotePosition() {
     const pop = document.getElementById('emote-pop');
     if (pop.style.display === 'none') return;
     
-    // ★高さ修正: 2.0 -> 2.6
     const headPos = model.position.clone().add(new THREE.Vector3(0, 2.6, 0));
     headPos.project(camera);
     
@@ -390,13 +449,22 @@ function handleTapAction(event) {
     
     if (intersectsModel.length > 0) {
         if (tapResetTimer) { 
+            // ダブルタップ
             clearTimeout(tapResetTimer); 
             tapResetTimer = null; 
-            playOnceAction(); 
+            
+            if (isLiftingLoop) {
+                // ループ中なら終了処理 (5c -> Neutral)
+                stopLiftingSequence();
+            } else {
+                // 通常なら開始処理 (5a -> 5b Loop)
+                startLiftingSequence();
+            }
         } else { 
+            // シングルタップ (今回は特に指定なし、必要ならSwing等を再生)
             tapResetTimer = setTimeout(() => { 
                 tapResetTimer = null; 
-                playLoopAction("Single Tap"); 
+                // playSingleTapAction(); 
             }, 250); 
         }
         return;
