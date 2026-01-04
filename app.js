@@ -10,7 +10,7 @@ const helpContent = [
     { title: "歩いて移動", icon: "👆", desc: "地面を【1回タップ】" },
     { title: "ダッシュ移動", icon: "👆👆", desc: "地面を【2回連打】" },
     { title: "リフティング開始", icon: "⚽", desc: "ミツハシくんを【ダブルタップ】" },
-    { title: "リフティング終了", icon: "🛑", desc: "リフティング中に【ダブルタップ】" }
+    { title: "特殊アクション", icon: "✨", desc: "リフティング中に【ダブルタップ】" }
 ];
 
 window.isModalOpen = false;
@@ -45,11 +45,7 @@ window.updateParam = (key, val) => {
 
 // --- Three.js Setup ---
 const statusEl = document.getElementById('status-log');
-// ログ出力関数: 左上には表示せず、コンソールのみに出力 (デバッグメニューには別途追加)
-function debugLog(msg) { 
-    // statusEl.innerHTML = msg; // 左上表示を無効化
-    console.log(msg); 
-}
+function debugLog(msg) { console.log(msg); }
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xe0e0e0);
@@ -83,18 +79,17 @@ scene.add(ground);
 let mixer, model, blobShadow, flag;
 let activeAction = null; 
 
-// Animation Roles (指定の割り当て)
-let animNeutral   = null; // 0: neutral (Idle)
-let animSwing     = null; // 1: swing
-let animJump      = null; // 2: jump
-let animRun       = null; // 3: run
-let animPick      = null; // 4: item_pick
-let animLiftStart = null; // 5: 5a_lifting (Start)
-let animLiftLoop  = null; // 6: 5b_lifting (Loop)
-let animLiftEnd   = null; // 7: 5c_lifting (End)
+// Animation Roles
+let animNeutral   = null; // [0] 待機
+let animSwing     = null; // [1] スイング (オープニングで使用)
+let animJump      = null; // [2] ジャンプ
+let animRun       = null; // [3] 走行
+let animPick      = null; // [4] アイテム拾い
+let animLiftStart = null; // [5] リフティング開始 (5a)
+let animLiftLoop  = null; // [6] リフティングループ (5b)
+let animLiftEnd   = null; // [7] リフティング終了 (5c)
 
-// 状態管理フラグ
-let isLiftingLoop = false; // リフティングループ中かどうかの判定
+let isLiftingLoop = false;
 
 let idleTimer = null;
 let isProcessing = false, isMoving = false, isBoostMode = false, isOpening = true, isDragging = false;
@@ -142,25 +137,14 @@ new GLTFLoader().load(modelUrl, (gltf) => {
     mixer = new THREE.AnimationMixer(model);
     const actionList = [];
     
-    // アニメーションリスト作成
     gltf.animations.forEach((clip) => {
         const action = mixer.clipAction(clip);
         actionList.push(action);
     });
 
-    // --- デバッグメニューへの一覧追加 ---
     addAnimListToDebugMenu(gltf.animations);
 
-    // --- アニメーション割り当て (指定インデックス) ---
-    // [0] 0_neutral
-    // [1] 1_swing
-    // [2] 2_jump
-    // [3] 3_run
-    // [4] 4_item_pick
-    // [5] 5a_lifting
-    // [6] 5b_lifting
-    // [7] 5c_lifting
-    
+    // 割り当て
     if (actionList[0]) animNeutral   = actionList[0];
     if (actionList[1]) animSwing     = actionList[1];
     if (actionList[2]) animJump      = actionList[2];
@@ -170,10 +154,9 @@ new GLTFLoader().load(modelUrl, (gltf) => {
     if (actionList[6]) animLiftLoop  = actionList[6];
     if (actionList[7]) animLiftEnd   = actionList[7];
 
-    // 安全策: Neutralがない場合は0番を使う
     if (!animNeutral) animNeutral = actionList[0];
 
-    // ループ設定
+    // 基本設定
     if (animNeutral) animNeutral.setLoop(THREE.LoopRepeat);
     if (animRun)     animRun.setLoop(THREE.LoopRepeat);
     if (animLiftLoop) animLiftLoop.setLoop(THREE.LoopRepeat);
@@ -182,20 +165,15 @@ new GLTFLoader().load(modelUrl, (gltf) => {
     const setOnce = (act) => {
         if(act) { act.setLoop(THREE.LoopOnce); act.clampWhenFinished = true; }
     };
-    setOnce(animSwing);
     setOnce(animJump);
     setOnce(animPick);
-    setOnce(animLiftStart);
-    setOnce(animLiftEnd);
+    // Swing, LiftStart, LiftEnd等は使用時に設定を上書きすることがあるためここでは初期設定
 
     runOpeningSequence();
 });
 
-// デバッグメニューにリストを追加する関数
 function addAnimListToDebugMenu(animations) {
     const debugPanel = document.getElementById('debug-panel');
-    
-    // 既存のリストがあれば削除
     const oldList = document.getElementById('debug-anim-list');
     if (oldList) oldList.remove();
 
@@ -208,7 +186,7 @@ function addAnimListToDebugMenu(animations) {
 
     const label = document.createElement('div');
     label.className = 'debug-label';
-    label.innerText = 'ANIMATION LIST (Index : Name)';
+    label.innerText = 'ANIMATION LIST';
     section.appendChild(label);
 
     const ul = document.createElement('ul');
@@ -229,7 +207,6 @@ function addAnimListToDebugMenu(animations) {
     });
 
     section.appendChild(ul);
-    // 閉じるボタンの前あたりに挿入
     const closeBtn = debugPanel.querySelector('.btn-close');
     debugPanel.insertBefore(section, closeBtn);
 }
@@ -244,8 +221,10 @@ async function runOpeningSequence() {
     camera.position.set(0, 1.5, 4);
     controls.target.set(0, 0.8, -12); controls.update();
     
-    const startAnim = animNeutral;
+    // ★変更: actionList[1] (Swing) をループ再生
+    const startAnim = animSwing || animNeutral;
     if(startAnim) {
+        startAnim.setLoop(THREE.LoopRepeat); // ループ設定に強制
         startAnim.reset().play(); 
         activeAction = startAnim;
     }
@@ -256,7 +235,6 @@ async function runOpeningSequence() {
     pop.style.display = 'block'; updateEmotePosition();
     await new Promise(r => setTimeout(r, 1000)); pop.style.display = 'none';
     
-    // 走行開始
     await fadeTo(animRun, 0.2); 
     isMoving = true;
     while (model.position.z < -2.0) { 
@@ -278,68 +256,87 @@ async function runOpeningSequence() {
     resetIdleTimer(); 
 }
 
-// 2. 待機タイマー (30秒後 -> Swingでも再生してみる)
 function resetIdleTimer() { 
     if (idleTimer) clearTimeout(idleTimer); 
-    // 放置時アクションは今回指定がないため、Neutral維持 or Swingなどご自由に
-    // 今回はNeutral維持のためタイマー処理なし
 }
 
 // --- リフティング制御 ---
 
-// リフティング開始: 5a -> 5b (Loop)
+// 開始: 5a -> 5b (Loop)
 async function startLiftingSequence() {
     if (isProcessing || isMoving || !animLiftStart || !animLiftLoop) return;
     debugLog("Start Lifting");
     isProcessing = true;
     resetIdleTimer();
 
-    // 1. 5a_lifting (Start)
+    // 1. 5a (Start)
     animLiftStart.setLoop(THREE.LoopOnce);
     animLiftStart.clampWhenFinished = true;
     await fadeTo(animLiftStart, 0.2);
     
-    // 再生待ち
     const duration = animLiftStart.getClip().duration;
     await new Promise(r => setTimeout(r, duration * 1000));
 
-    // 2. 5b_lifting (Loop)
-    if (activeAction === animLiftStart && !isMoving) { // 割り込み確認
+    // 2. 5b (Loop)
+    if (activeAction === animLiftStart && !isMoving) { 
+        animLiftLoop.setLoop(THREE.LoopRepeat); // 念のためループ設定
         await fadeTo(animLiftLoop, 0.1);
         isLiftingLoop = true;
-        isProcessing = false; // ループ中は入力を受け付けるためfalse
+        isProcessing = false; 
         debugLog("Lifting Loop...");
     } else {
         isProcessing = false;
     }
 }
 
-// リフティング終了: 5c -> Neutral
+// ★変更: リフティング中の特殊アクション
+// 5a (1回) -> 1秒停止 -> 5b (1回) -> Neutral
 async function stopLiftingSequence() {
-    if (isMoving || !animLiftEnd) return;
-    debugLog("Stop Lifting");
-    isProcessing = true; // 終了動作中はガード
-    isLiftingLoop = false;
+    // 必要なアニメーションがあるか確認
+    if (isMoving || !animLiftStart || !animLiftLoop) return;
+    
+    debugLog("Special Action from Lifting");
+    isProcessing = true; 
+    isLiftingLoop = false; // ループ状態解除
 
-    // 1. 5c_lifting (End)
-    animLiftEnd.setLoop(THREE.LoopOnce);
-    animLiftEnd.clampWhenFinished = true;
-    await fadeTo(animLiftEnd, 0.1);
+    // 1. 5a (Start) を1回再生
+    animLiftStart.setLoop(THREE.LoopOnce);
+    animLiftStart.clampWhenFinished = true;
+    await fadeTo(animLiftStart, 0.1);
 
     // 再生待ち
-    const duration = animLiftEnd.getClip().duration;
+    let duration = animLiftStart.getClip().duration;
     await new Promise(r => setTimeout(r, duration * 1000));
 
-    // 2. Neutral
+    // 2. 1秒停止 (そのままのポーズで待機)
+    debugLog("Wait 1s...");
+    await new Promise(r => setTimeout(r, 1000));
+
+    // 3. 5b (Loop用のモーション) を1回だけ再生
+    debugLog("Play 5b Once");
+    animLiftLoop.setLoop(THREE.LoopOnce); // ここだけOnceにする
+    animLiftLoop.clampWhenFinished = true;
+    await fadeTo(animLiftLoop, 0.1);
+
+    // 再生待ち
+    duration = animLiftLoop.getClip().duration;
+    await new Promise(r => setTimeout(r, duration * 1000));
+
+    // 4. 終了 -> Neutral
     await fadeTo(animNeutral, 0.5);
+    
+    // 5bの設定をLoopに戻しておく(次回のため)
+    animLiftLoop.setLoop(THREE.LoopRepeat);
+    
     isProcessing = false;
 }
 
-// 移動処理 (割り込み対応)
+// 移動処理
 async function startNavigation(targetPos, boost) {
-    // リフティング中なら強制解除
     if (isLiftingLoop) {
         isLiftingLoop = false;
+        // リフティング中なら即キャンセルして走るため設定を戻す
+        if(animLiftLoop) animLiftLoop.setLoop(THREE.LoopRepeat);
     }
     
     isProcessing = true; isBoostMode = boost;
@@ -365,11 +362,9 @@ async function startNavigation(targetPos, boost) {
     const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
     await turnTowards(Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z), true);
     
-    // 終了後 -> Neutral
     await fadeTo(animNeutral, 0.5);
     
     isProcessing = false; resetIdleTimer();
-    debugLog("Ready.");
 }
 
 // --- Animation Helper ---
@@ -454,14 +449,14 @@ function handleTapAction(event) {
             tapResetTimer = null; 
             
             if (isLiftingLoop) {
-                // ループ中なら終了処理 (5c -> Neutral)
+                // ループ中なら特殊終了 (5a -> Wait -> 5b -> End)
                 stopLiftingSequence();
             } else {
-                // 通常なら開始処理 (5a -> 5b Loop)
+                // 通常ならリフティング開始 (5a -> 5b Loop)
                 startLiftingSequence();
             }
         } else { 
-            // シングルタップ (今回は特に指定なし、必要ならSwing等を再生)
+            // シングルタップ待機
             tapResetTimer = setTimeout(() => { 
                 tapResetTimer = null; 
                 // playSingleTapAction(); 
