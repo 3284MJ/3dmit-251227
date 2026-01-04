@@ -7,7 +7,7 @@ window.params = { walkSpeed: 0.06, dashSpeed: 0.12 };
 
 // --- UI Logic ---
 const helpContent = [
-    { title: "歩いて移動", icon: "👆", desc: "地面を【1回タップ】" },
+    { title: "連続移動", icon: "🚩", desc: "地面をタップ（最大3か所予約可能）" },
     { title: "ダッシュ移動", icon: "👆👆", desc: "地面を【2回連打】" },
     { title: "リフティング開始", icon: "⚽", desc: "ミツハシくんを【ダブルタップ】" },
     { title: "特殊アクション", icon: "✨", desc: "リフティング中に【ダブルタップ】" }
@@ -79,20 +79,21 @@ scene.add(ground);
 let mixer, model, blobShadow;
 let flags = []; 
 const MAX_WAYPOINTS = 3;
-let waypointQueue = []; // { pos: Vector3, flagIndex: number } を格納
-let totalScheduled = 0; // 現在のセッションで予約された総数（完了するまで減らない）
+let waypointQueue = []; 
+let totalScheduled = 0; 
 
 let activeAction = null; 
+let isFlagInputLocked = false; // フラグ設置ロック用
 
 // Animation Roles
-let animNeutral   = null; // [0] 待機
-let animSwing     = null; // [1] スイング
-let animJump      = null; // [2] ジャンプ
-let animRun       = null; // [3] 走行
-let animPick      = null; // [4] アイテム拾い
-let animLiftStart = null; // [5] リフティング開始 (5a)
-let animLiftLoop  = null; // [6] リフティングループ (5b)
-let animLiftEnd   = null; // [7] リフティング終了 (5c)
+let animNeutral   = null; // [0]
+let animSwing     = null; // [1]
+let animJump      = null; // [2]
+let animRun       = null; // [3]
+let animPick      = null; // [4]
+let animLiftStart = null; // [5]
+let animLiftLoop  = null; // [6]
+let animLiftEnd   = null; // [7]
 
 let isLiftingLoop = false;
 
@@ -129,7 +130,6 @@ function createFlag() {
     g.add(pole, cloth); g.visible = false;
     return g;
 }
-// 旗を3つ生成してプール
 for(let i=0; i<MAX_WAYPOINTS; i++) {
     const f = createFlag();
     scene.add(f);
@@ -227,7 +227,6 @@ async function runOpeningSequence() {
     camera.position.set(0, 1.5, 4);
     controls.target.set(0, 0.8, -12); controls.update();
     
-    // actionList[1] (Swing) をループ再生
     const startAnim = animSwing || animNeutral;
     if(startAnim) {
         startAnim.setLoop(THREE.LoopRepeat);
@@ -251,12 +250,16 @@ async function runOpeningSequence() {
     }
     isMoving = false;
     
+    // ★修正: 移動完了後は Neutral をループ再生
     await fadeTo(animNeutral, 0.3);
 
-    // ★復元: 停止後にカメラを向く
+    // 向き直り
     const camPos = new THREE.Vector3();
     camera.getWorldPosition(camPos);
     await turnTowards(Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z), true);
+
+    // ★修正: 向き直り完了後、RunからNeutralに戻す
+    await fadeTo(animNeutral, 0.5);
 
     controls.target.set(0, 0.5, -2); 
     controls.update();
@@ -276,7 +279,7 @@ function resetIdleTimer() {
 async function startLiftingSequence() {
     if (isProcessing || isMoving || !animLiftStart || !animLiftLoop) return;
     
-    clearWaypoints(); // 移動予約解除
+    clearWaypoints(); 
 
     debugLog("Start Lifting");
     isProcessing = true;
@@ -300,28 +303,35 @@ async function startLiftingSequence() {
     }
 }
 
-// 特殊アクション: 5b(1回) -> 1秒停止 -> 5c(1回) -> Neutral
+// ★修正: 特殊アクション
+// 5b(今のループを最後まで) -> 1秒待機 -> 5c(1回) -> Neutral
 async function stopLiftingSequence() {
     if (isMoving || !animLiftLoop || !animLiftEnd) return;
     
     clearWaypoints();
 
-    debugLog("Special Action");
+    debugLog("Special Action: Finish Loop -> 5c");
     isProcessing = true; 
     isLiftingLoop = false;
 
-    // 1. 5b (Loopモーション) を「1回」
-    animLiftLoop.setLoop(THREE.LoopOnce);
-    animLiftLoop.clampWhenFinished = true;
-    
-    if (activeAction === animLiftLoop) activeAction.stop();
-    animLiftLoop.reset().setEffectiveWeight(1).fadeIn(0.1).play();
-    activeAction = animLiftLoop;
+    // 1. 現在再生中の 5b (Loop) を「今回のループで終了」させる
+    if (activeAction === animLiftLoop) {
+        animLiftLoop.setLoop(THREE.LoopOnce);
+        animLiftLoop.clampWhenFinished = true;
+        
+        // 再生が完了するイベントを待つ
+        await new Promise(resolve => {
+            const onFinished = (e) => {
+                if (e.action === animLiftLoop) {
+                    mixer.removeEventListener('finished', onFinished);
+                    resolve();
+                }
+            };
+            mixer.addEventListener('finished', onFinished);
+        });
+    }
 
-    let duration = animLiftLoop.getClip().duration;
-    await new Promise(r => setTimeout(r, duration * 1000));
-
-    // 2. 1秒停止
+    // 2. 1秒待機
     debugLog("Wait 1s...");
     await new Promise(r => setTimeout(r, 1000));
 
@@ -331,12 +341,13 @@ async function stopLiftingSequence() {
     animLiftEnd.clampWhenFinished = true;
     await fadeTo(animLiftEnd, 0.1);
 
-    duration = animLiftEnd.getClip().duration;
+    const duration = animLiftEnd.getClip().duration;
     await new Promise(r => setTimeout(r, duration * 1000));
 
-    // 4. 終了
+    // 4. 終了 -> Neutral
     await fadeTo(animNeutral, 0.5);
     
+    // 次回のためにLoopに戻しておく
     animLiftLoop.setLoop(THREE.LoopRepeat);
     isProcessing = false;
 }
@@ -344,6 +355,9 @@ async function stopLiftingSequence() {
 // --- ウェイポイント移動システム ---
 
 function handleWaypointAdd(point) {
+    // ロック中は無視
+    if (isFlagInputLocked) return;
+
     if (isLiftingLoop) {
         isLiftingLoop = false;
         if(animLiftLoop) animLiftLoop.setLoop(THREE.LoopRepeat);
@@ -351,25 +365,20 @@ function handleWaypointAdd(point) {
         clearWaypoints(); 
     }
 
-    // ★修正: 予約数が上限に達していたら追加しない（回復するまで待つ）
     if (totalScheduled >= MAX_WAYPOINTS) return;
 
-    // キューに追加
-    const flagIndex = totalScheduled; // 今回使うフラグの番号
-    totalScheduled++; // 予約数を消費
+    const flagIndex = totalScheduled;
+    totalScheduled++; 
     
     waypointQueue.push({ pos: point, flagIndex: flagIndex });
     
-    // フラグ表示
     if (flags[flagIndex]) {
         flags[flagIndex].position.copy(point);
         flags[flagIndex].visible = true;
-        // 色設定 (0:赤, 1:黄, 2:緑)
         const colors = [0xff4757, 0xffd700, 0x2ed573];
         flags[flagIndex].children[1].material.color.set(colors[flagIndex % 3]);
     }
 
-    // 移動開始
     if (!isMoving && !isProcessing) {
         processNextWaypoint();
     }
@@ -377,7 +386,7 @@ function handleWaypointAdd(point) {
 
 function clearWaypoints() {
     waypointQueue = [];
-    totalScheduled = 0; // 予約数リセット
+    totalScheduled = 0; 
     flags.forEach(f => f.visible = false);
 }
 
@@ -389,13 +398,23 @@ async function processNextWaypoint() {
         isProcessing = false;
         await fadeTo(animNeutral, 0.5);
         
-        // ★復元: 完了時にカメラの方を向く
+        // 向き直り
         const camPos = new THREE.Vector3();
         camera.getWorldPosition(camPos);
         await turnTowards(Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z), true);
 
-        // 予約数リセット（ここで初めて回復）
-        totalScheduled = 0;
+        // ★修正: 向き直り後は足踏み(Run)から Neutral へ戻す
+        await fadeTo(animNeutral, 0.5);
+
+        // ★修正: フラグ設置を1秒間ロック
+        isFlagInputLocked = true;
+        debugLog("Input Locked for 1s");
+        setTimeout(() => {
+            isFlagInputLocked = false;
+            // 予約数リセット（ロック解除後に初めて回復）
+            totalScheduled = 0;
+            debugLog("Input Unlocked");
+        }, 1000);
         
         resetIdleTimer();
         debugLog("All Waypoints Reached.");
@@ -418,7 +437,6 @@ async function processNextWaypoint() {
 
     const speed = window.params.walkSpeed;
 
-    // 移動ループ
     await new Promise(resolve => {
         const interval = setInterval(() => {
             if (!isMoving) { clearInterval(interval); resolve(); return; }
@@ -435,12 +453,10 @@ async function processNextWaypoint() {
         }, 16);
     });
 
-    // 到着処理: 該当するフラグを消す
     if (flags[targetData.flagIndex]) {
         flags[targetData.flagIndex].visible = false;
     }
 
-    // キューから削除して次へ
     waypointQueue.shift();
     processNextWaypoint();
 }
@@ -546,7 +562,6 @@ function handleTapAction(event) {
         if (tapResetTimer) {
             clearTimeout(tapResetTimer);
             tapResetTimer = null;
-            // ダブルタップ時は本来ダッシュ等だが、ここでは移動予約に統一
             handleWaypointAdd(p);
         } else {
             tapResetTimer = setTimeout(() => {
