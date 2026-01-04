@@ -81,7 +81,7 @@ let activeAction = null;
 
 // Animation Roles
 let animNeutral   = null; // [0] 待機
-let animSwing     = null; // [1] スイング (オープニングで使用)
+let animSwing     = null; // [1] スイング
 let animJump      = null; // [2] ジャンプ
 let animRun       = null; // [3] 走行
 let animPick      = null; // [4] アイテム拾い
@@ -165,9 +165,11 @@ new GLTFLoader().load(modelUrl, (gltf) => {
     const setOnce = (act) => {
         if(act) { act.setLoop(THREE.LoopOnce); act.clampWhenFinished = true; }
     };
+    setOnce(animSwing);
     setOnce(animJump);
     setOnce(animPick);
-    // Swing, LiftStart, LiftEnd等は使用時に設定を上書きすることがあるためここでは初期設定
+    setOnce(animLiftStart);
+    setOnce(animLiftEnd);
 
     runOpeningSequence();
 });
@@ -221,10 +223,10 @@ async function runOpeningSequence() {
     camera.position.set(0, 1.5, 4);
     controls.target.set(0, 0.8, -12); controls.update();
     
-    // ★変更: actionList[1] (Swing) をループ再生
+    // actionList[1] (Swing) をループ再生
     const startAnim = animSwing || animNeutral;
     if(startAnim) {
-        startAnim.setLoop(THREE.LoopRepeat); // ループ設定に強制
+        startAnim.setLoop(THREE.LoopRepeat);
         startAnim.reset().play(); 
         activeAction = startAnim;
     }
@@ -245,7 +247,6 @@ async function runOpeningSequence() {
     }
     isMoving = false;
     
-    // 終了 -> Neutral
     await fadeTo(animNeutral, 0.3);
 
     controls.target.set(0, 0.5, -2); 
@@ -279,7 +280,7 @@ async function startLiftingSequence() {
 
     // 2. 5b (Loop)
     if (activeAction === animLiftStart && !isMoving) { 
-        animLiftLoop.setLoop(THREE.LoopRepeat); // 念のためループ設定
+        animLiftLoop.setLoop(THREE.LoopRepeat); 
         await fadeTo(animLiftLoop, 0.1);
         isLiftingLoop = true;
         isProcessing = false; 
@@ -289,53 +290,56 @@ async function startLiftingSequence() {
     }
 }
 
-// ★変更: リフティング中の特殊アクション
-// 5a (1回) -> 1秒停止 -> 5b (1回) -> Neutral
+// ★修正: リフティング中の特殊アクション
+// 5b (1回) -> 1秒停止 -> 5c (1回) -> Neutral
 async function stopLiftingSequence() {
-    // 必要なアニメーションがあるか確認
-    if (isMoving || !animLiftStart || !animLiftLoop) return;
+    if (isMoving || !animLiftLoop || !animLiftEnd) return;
     
-    debugLog("Special Action from Lifting");
+    debugLog("Special Action: 5b(Once) -> Wait -> 5c");
     isProcessing = true; 
-    isLiftingLoop = false; // ループ状態解除
+    isLiftingLoop = false; // ループ解除
 
-    // 1. 5a (Start) を1回再生
-    animLiftStart.setLoop(THREE.LoopOnce);
-    animLiftStart.clampWhenFinished = true;
-    await fadeTo(animLiftStart, 0.1);
+    // 1. 5b (Loopモーション) を「1回」だけ再生する
+    // 現在再生中であってもリセットして1回分再生させる
+    animLiftLoop.setLoop(THREE.LoopOnce);
+    animLiftLoop.clampWhenFinished = true;
+    
+    // fadeToだと同じアニメーションの場合スキップされる可能性があるため、明示的に再生
+    if (activeAction === animLiftLoop) activeAction.stop();
+    animLiftLoop.reset().setEffectiveWeight(1).fadeIn(0.1).play();
+    activeAction = animLiftLoop;
 
     // 再生待ち
-    let duration = animLiftStart.getClip().duration;
+    let duration = animLiftLoop.getClip().duration;
     await new Promise(r => setTimeout(r, duration * 1000));
 
-    // 2. 1秒停止 (そのままのポーズで待機)
+    // 2. 1秒停止
     debugLog("Wait 1s...");
     await new Promise(r => setTimeout(r, 1000));
 
-    // 3. 5b (Loop用のモーション) を1回だけ再生
-    debugLog("Play 5b Once");
-    animLiftLoop.setLoop(THREE.LoopOnce); // ここだけOnceにする
-    animLiftLoop.clampWhenFinished = true;
-    await fadeTo(animLiftLoop, 0.1);
+    // 3. 5c (Endモーション) を1回再生
+    debugLog("Play 5c");
+    animLiftEnd.setLoop(THREE.LoopOnce);
+    animLiftEnd.clampWhenFinished = true;
+    await fadeTo(animLiftEnd, 0.1);
 
     // 再生待ち
-    duration = animLiftLoop.getClip().duration;
+    duration = animLiftEnd.getClip().duration;
     await new Promise(r => setTimeout(r, duration * 1000));
 
     // 4. 終了 -> Neutral
     await fadeTo(animNeutral, 0.5);
     
-    // 5bの設定をLoopに戻しておく(次回のため)
+    // 5bの設定をLoopに戻しておく
     animLiftLoop.setLoop(THREE.LoopRepeat);
     
     isProcessing = false;
 }
 
-// 移動処理
+// 移動処理 (割り込み対応)
 async function startNavigation(targetPos, boost) {
     if (isLiftingLoop) {
         isLiftingLoop = false;
-        // リフティング中なら即キャンセルして走るため設定を戻す
         if(animLiftLoop) animLiftLoop.setLoop(THREE.LoopRepeat);
     }
     
@@ -365,6 +369,7 @@ async function startNavigation(targetPos, boost) {
     await fadeTo(animNeutral, 0.5);
     
     isProcessing = false; resetIdleTimer();
+    debugLog("Ready.");
 }
 
 // --- Animation Helper ---
@@ -449,17 +454,17 @@ function handleTapAction(event) {
             tapResetTimer = null; 
             
             if (isLiftingLoop) {
-                // ループ中なら特殊終了 (5a -> Wait -> 5b -> End)
+                // ループ中 -> 5b(1回) -> 1秒待機 -> 5c
                 stopLiftingSequence();
             } else {
-                // 通常ならリフティング開始 (5a -> 5b Loop)
+                // 通常 -> 開始処理
                 startLiftingSequence();
             }
         } else { 
             // シングルタップ待機
             tapResetTimer = setTimeout(() => { 
                 tapResetTimer = null; 
-                // playSingleTapAction(); 
+                // 必要ならここにシングルタップ処理
             }, 250); 
         }
         return;
