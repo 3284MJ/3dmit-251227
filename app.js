@@ -83,7 +83,7 @@ let waypointQueue = [];
 let totalScheduled = 0; 
 
 let activeAction = null; 
-let isFlagInputLocked = false; // フラグ設置ロック用
+let isFlagInputLocked = false; 
 
 // Animation Roles
 let animNeutral   = null; // [0]
@@ -95,7 +95,9 @@ let animLiftStart = null; // [5]
 let animLiftLoop  = null; // [6]
 let animLiftEnd   = null; // [7]
 
-let isLiftingLoop = false;
+// 状態管理フラグ
+let isLiftingLoop = false;   // ループ再生中かどうか
+let isLiftingActive = false; // リフティングシーケンス全体(開始～終了)がアクティブかどうか
 
 let idleTimer = null;
 let isProcessing = false, isMoving = false, isBoostMode = false, isOpening = true, isDragging = false;
@@ -227,6 +229,7 @@ async function runOpeningSequence() {
     camera.position.set(0, 1.5, 4);
     controls.target.set(0, 0.8, -12); controls.update();
     
+    // Swing Loop
     const startAnim = animSwing || animNeutral;
     if(startAnim) {
         startAnim.setLoop(THREE.LoopRepeat);
@@ -250,16 +253,9 @@ async function runOpeningSequence() {
     }
     isMoving = false;
     
-    // ★修正: 移動完了後は Neutral をループ再生
+    // ★修正: 停止処理。向き直り(turnTowards)を削除し、そのままNeutralへ移行
+    // これにより余計な走行アニメーションが再生されるのを防ぐ
     await fadeTo(animNeutral, 0.3);
-
-    // 向き直り
-    const camPos = new THREE.Vector3();
-    camera.getWorldPosition(camPos);
-    await turnTowards(Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z), true);
-
-    // ★修正: 向き直り完了後、RunからNeutralに戻す
-    await fadeTo(animNeutral, 0.5);
 
     controls.target.set(0, 0.5, -2); 
     controls.update();
@@ -275,7 +271,7 @@ function resetIdleTimer() {
 
 // --- リフティング制御 ---
 
-// 開始: 5a -> 5b (Loop)
+// 開始
 async function startLiftingSequence() {
     if (isProcessing || isMoving || !animLiftStart || !animLiftLoop) return;
     
@@ -283,6 +279,7 @@ async function startLiftingSequence() {
 
     debugLog("Start Lifting");
     isProcessing = true;
+    isLiftingActive = true; // ★ロック開始
     resetIdleTimer();
 
     animLiftStart.setLoop(THREE.LoopOnce);
@@ -296,15 +293,15 @@ async function startLiftingSequence() {
         animLiftLoop.setLoop(THREE.LoopRepeat); 
         await fadeTo(animLiftLoop, 0.1);
         isLiftingLoop = true;
-        isProcessing = false; 
+        isProcessing = false; // ダブルタップ等は受け付けるように
         debugLog("Lifting Loop...");
     } else {
         isProcessing = false;
+        isLiftingActive = false; // 失敗時ロック解除
     }
 }
 
-// ★修正: 特殊アクション
-// 5b(今のループを最後まで) -> 1秒待機 -> 5c(1回) -> Neutral
+// 終了
 async function stopLiftingSequence() {
     if (isMoving || !animLiftLoop || !animLiftEnd) return;
     
@@ -314,12 +311,11 @@ async function stopLiftingSequence() {
     isProcessing = true; 
     isLiftingLoop = false;
 
-    // 1. 現在再生中の 5b (Loop) を「今回のループで終了」させる
+    // 1. 現在のループが終わるまで待つ
     if (activeAction === animLiftLoop) {
         animLiftLoop.setLoop(THREE.LoopOnce);
         animLiftLoop.clampWhenFinished = true;
         
-        // 再生が完了するイベントを待つ
         await new Promise(resolve => {
             const onFinished = (e) => {
                 if (e.action === animLiftLoop) {
@@ -347,23 +343,17 @@ async function stopLiftingSequence() {
     // 4. 終了 -> Neutral
     await fadeTo(animNeutral, 0.5);
     
-    // 次回のためにLoopに戻しておく
+    // リセット
     animLiftLoop.setLoop(THREE.LoopRepeat);
     isProcessing = false;
+    isLiftingActive = false; // ★ロック解除
 }
 
 // --- ウェイポイント移動システム ---
 
 function handleWaypointAdd(point) {
-    // ロック中は無視
-    if (isFlagInputLocked) return;
-
-    if (isLiftingLoop) {
-        isLiftingLoop = false;
-        if(animLiftLoop) animLiftLoop.setLoop(THREE.LoopRepeat);
-        isProcessing = false;
-        clearWaypoints(); 
-    }
+    // ★ロックチェック: フラグ設置制限 or リフティング中なら無視
+    if (isFlagInputLocked || isLiftingActive) return;
 
     if (totalScheduled >= MAX_WAYPOINTS) return;
 
@@ -403,15 +393,14 @@ async function processNextWaypoint() {
         camera.getWorldPosition(camPos);
         await turnTowards(Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z), true);
 
-        // ★修正: 向き直り後は足踏み(Run)から Neutral へ戻す
+        // 向き直り後 Neutral
         await fadeTo(animNeutral, 0.5);
 
-        // ★修正: フラグ設置を1秒間ロック
+        // フラグ設置を1秒間ロック
         isFlagInputLocked = true;
         debugLog("Input Locked for 1s");
         setTimeout(() => {
             isFlagInputLocked = false;
-            // 予約数リセット（ロック解除後に初めて回復）
             totalScheduled = 0;
             debugLog("Input Unlocked");
         }, 1000);
@@ -421,7 +410,7 @@ async function processNextWaypoint() {
         return;
     }
 
-    // 次の目標を取得
+    // 次の目標
     const targetData = waypointQueue[0];
     const targetPos = targetData.pos;
     
