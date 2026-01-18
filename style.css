@@ -83,3 +83,42 @@ input[type=range] { width: 100%; accent-color: #00ffcc; }
     50% { transform: scale(1.2) translateY(-10px); opacity: 1; }
     100% { transform: scale(1) translateY(0); opacity: 1; }
 }
+/* --- リングコマンド用スタイル --- */
+#ring-menu {
+    display: none;
+    position: absolute;
+    width: 0; height: 0;
+    z-index: 5000;
+    pointer-events: none;
+}
+
+#ring-menu::before {
+    content: "";
+    position: absolute;
+    width: 160px; height: 160px;
+    background: rgba(255, 255, 255, 0.15);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    backdrop-filter: blur(5px);
+}
+
+.ring-item {
+    position: absolute;
+    width: 50px; height: 50px;
+    background: white;
+    border-radius: 50%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 24px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), background 0.2s;
+    user-select: none;
+}
+
+.ring-item.active {
+    background: #00ffcc;
+    color: white;
+}
+
