@@ -71,7 +71,7 @@ scene.background = new THREE.Color(0xe0e0e0);
 scene.fog = new THREE.Fog(0xe0e0e0, 10, 50);
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-// ★修正: 初期位置をオープニング開始位置に合わせて視差ズレを解消
+// 初期位置をオープニング開始位置に合わせる
 camera.position.set(0, 2, 5); 
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -209,7 +209,6 @@ function openRingMenu(x, y) {
 
     const radius = 70;
     menuItems.forEach((item, i) => {
-        // アイコン配置 (1つなので真上)
         const angle = -Math.PI / 2; 
         const ix = Math.cos(angle) * radius;
         const iy = Math.sin(angle) * radius;
@@ -218,8 +217,7 @@ function openRingMenu(x, y) {
         btn.className = 'ring-item';
         btn.innerHTML = item.icon;
         
-        // ★重要: 初期位置をdata属性に保存し、拡大縮小はこれを基準に行う
-        // これによりCSSのtransform競合を防ぐ
+        // 初期位置を保存
         const baseTransform = `translate(-50%, -50%) translate(${ix}px, ${iy}px)`;
         btn.dataset.baseTransform = baseTransform;
         btn.style.transform = baseTransform;
@@ -239,17 +237,14 @@ function updateRingMenuSelection(mx, my) {
         const icx = itemRect.left + itemRect.width / 2;
         const icy = itemRect.top + itemRect.height / 2;
         
-        // マウス位置との距離
         const d = Math.sqrt(Math.pow(mx - icx, 2) + Math.pow(my - icy, 2));
         
-        // 判定距離（35px以内ならアクティブ）
         const base = el.dataset.baseTransform;
         if (d < 35) {
-            // ★修正: 色を変えず、サイズのみ1.2倍に。位置は維持。
-            el.style.transform = `${base} scale(1.2)`;
+            // ★修正: 拡大率を1.4倍に設定。色は変更しない。
+            el.style.transform = `${base} scale(1.4)`;
             selectedMenuIndex = i;
         } else {
-            // 元に戻す
             el.style.transform = `${base} scale(1.0)`;
         }
     });
@@ -273,7 +268,7 @@ async function runOpeningSequence() {
     model.position.set(0, 0, -12);
     model.rotation.set(0, 0, 0);
     
-    // カメラは初期化時に設定済みだが、念のためオープニング用に再セット
+    // カメラ位置セット (初期化時と同じにしてズレ防止)
     camera.position.set(0, 2, 5); 
     
     controls.target.set(0, 0.8, -12); 
@@ -547,7 +542,7 @@ window.addEventListener('pointerdown', (e) => {
     if (isOpening || e.target.closest('.ui-panel') || e.target.closest('#debug-panel') || window.isModalOpen) return;
     isDragging = false; pointerDownPos.set(e.clientX, e.clientY);
 
-    // ★長押し判定開始 (リングコマンド)
+    // ★長押し判定 (リングコマンド)
     clearTimeout(pressTimer);
     pressTimer = setTimeout(() => {
         const rect = renderer.domElement.getBoundingClientRect();
@@ -600,7 +595,7 @@ function handleTapAction(event) {
     
     if (intersectsModel.length > 0) {
         if (tapResetTimer) { 
-            // ダブルタップ (リフティング)
+            // ダブルタップ
             clearTimeout(tapResetTimer); 
             tapResetTimer = null; 
             
