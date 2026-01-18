@@ -15,7 +15,6 @@ const menuItems = [
         icon: '⚽', 
         label: 'リフティング', 
         action: () => { 
-            // 既存のリフティングロジックを呼び出し
             if(isLiftingLoop) stopLiftingSequence(); 
             else startLiftingSequence(); 
         } 
@@ -72,8 +71,8 @@ scene.background = new THREE.Color(0xe0e0e0);
 scene.fog = new THREE.Fog(0xe0e0e0, 10, 50);
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-const DEFAULT_CAM_POS = new THREE.Vector3(0, 6, 12);
-camera.position.set(0, 5, 10); 
+// ★修正: 初期位置をオープニング開始位置に合わせて視差ズレを解消
+camera.position.set(0, 2, 5); 
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -117,7 +116,7 @@ let animLiftEnd   = null; // [7]
 
 // 状態管理フラグ
 let isLiftingLoop = false;   // ループ再生中かどうか
-let isLiftingActive = false; // リフティングシーケンス全体(開始～終了)がアクティブかどうか
+let isLiftingActive = false; // リフティングシーケンス全体
 
 let idleTimer = null;
 let isProcessing = false, isMoving = false, isBoostMode = false, isOpening = true, isDragging = false;
@@ -174,12 +173,6 @@ new GLTFLoader().load(modelUrl, (gltf) => {
         actionList.push(action);
     });
 
-    // デバッグメニュー用
-    const debugPanel = document.getElementById('debug-panel');
-    if (debugPanel) {
-        // 簡易的なアニメーションリスト表示(前回同様)
-    }
-
     if (actionList[0]) animNeutral   = actionList[0];
     if (actionList[1]) animSwing     = actionList[1];
     if (actionList[2]) animJump      = actionList[2];
@@ -208,16 +201,15 @@ new GLTFLoader().load(modelUrl, (gltf) => {
 
 function openRingMenu(x, y) {
     isRingMenuOpen = true;
-    controls.enabled = false; // カメラ操作ロック
+    controls.enabled = false;
     ringMenuEl.style.display = 'block';
     ringMenuEl.style.left = `${x}px`;
     ringMenuEl.style.top = `${y}px`;
     ringMenuEl.innerHTML = '';
 
-    const radius = 70; // メニューの半径
+    const radius = 70;
     menuItems.forEach((item, i) => {
-        // アイコン配置 (今回は1つなので真上(-PI/2)に配置)
-        // 複数ある場合は角度を計算: (i / menuItems.length) * Math.PI * 2 - Math.PI / 2
+        // アイコン配置 (1つなので真上)
         const angle = -Math.PI / 2; 
         const ix = Math.cos(angle) * radius;
         const iy = Math.sin(angle) * radius;
@@ -225,8 +217,13 @@ function openRingMenu(x, y) {
         const btn = document.createElement('div');
         btn.className = 'ring-item';
         btn.innerHTML = item.icon;
-        // 中心から配置
-        btn.style.transform = `translate(-50%, -50%) translate(${ix}px, ${iy}px)`;
+        
+        // ★重要: 初期位置をdata属性に保存し、拡大縮小はこれを基準に行う
+        // これによりCSSのtransform競合を防ぐ
+        const baseTransform = `translate(-50%, -50%) translate(${ix}px, ${iy}px)`;
+        btn.dataset.baseTransform = baseTransform;
+        btn.style.transform = baseTransform;
+        
         ringMenuEl.appendChild(btn);
     });
 }
@@ -234,14 +231,6 @@ function openRingMenu(x, y) {
 function updateRingMenuSelection(mx, my) {
     if (!isRingMenuOpen) return;
     
-    const rect = ringMenuEl.getBoundingClientRect();
-    // リングメニューの中心座標
-    // absolute配置のleft/topは要素の左上基準だが、transformでtranslate(-50%, -50%)している前提なら
-    // rectの中心を取るのが安全ではないため、保存しておいた方が良いが、
-    // ここではDOMの配置位置から逆算
-    const cx = parseFloat(ringMenuEl.style.left);
-    const cy = parseFloat(ringMenuEl.style.top);
-
     selectedMenuIndex = -1;
     const items = ringMenuEl.querySelectorAll('.ring-item');
     
@@ -254,24 +243,25 @@ function updateRingMenuSelection(mx, my) {
         const d = Math.sqrt(Math.pow(mx - icx, 2) + Math.pow(my - icy, 2));
         
         // 判定距離（35px以内ならアクティブ）
+        const base = el.dataset.baseTransform;
         if (d < 35) {
-            el.classList.add('active'); // CSSでscale(1.2)
+            // ★修正: 色を変えず、サイズのみ1.2倍に。位置は維持。
+            el.style.transform = `${base} scale(1.2)`;
             selectedMenuIndex = i;
         } else {
-            el.classList.remove('active');
+            // 元に戻す
+            el.style.transform = `${base} scale(1.0)`;
         }
     });
 }
 
 function closeRingMenu() {
     if (selectedMenuIndex !== -1) {
-        // 選択されたアクション実行
         menuItems[selectedMenuIndex].action();
     }
     isRingMenuOpen = false;
     ringMenuEl.style.display = 'none';
     
-    // オープニング中やドラッグ中でなければカメラ操作戻す
     if (!isOpening && !isLiftingActive) controls.enabled = true;
 }
 
@@ -283,9 +273,7 @@ async function runOpeningSequence() {
     model.position.set(0, 0, -12);
     model.rotation.set(0, 0, 0);
     
-    // ★カメラ位置調整: あまり高すぎない位置へ
-    camera.position.set(0, 1.5, -8); // キャラの後ろから追従するような位置など調整可
-    // 今回は初期位置(0,5,10)より低く、かつキャラに近い位置
+    // カメラは初期化時に設定済みだが、念のためオープニング用に再セット
     camera.position.set(0, 2, 5); 
     
     controls.target.set(0, 0.8, -12); 
@@ -317,7 +305,6 @@ async function runOpeningSequence() {
     
     await fadeTo(animNeutral, 0.3);
 
-    // ★復元: 停止後にカメラを向く (前回のコードベース)
     const camPos = new THREE.Vector3();
     camera.getWorldPosition(camPos);
     await turnTowards(Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z), true);
@@ -325,9 +312,6 @@ async function runOpeningSequence() {
     await fadeTo(animNeutral, 0.5);
 
     controls.target.set(0, 0.5, -2); 
-    // ★カメラ位置をリセット（高止まり防止）
-    // デフォルト位置より少し寄り気味にするなど
-    // camera.position.set(0, 2, 4); // 必要であればここでセット
     controls.update();
 
     isOpening = false; 
@@ -381,7 +365,6 @@ async function stopLiftingSequence() {
     isProcessing = true; 
     isLiftingLoop = false;
 
-    // 1. 現在のループが終わるまで待つ
     if (activeAction === animLiftLoop) {
         animLiftLoop.setLoop(THREE.LoopOnce);
         animLiftLoop.clampWhenFinished = true;
@@ -397,11 +380,9 @@ async function stopLiftingSequence() {
         });
     }
 
-    // 2. 1秒待機
     debugLog("Wait 1s...");
     await new Promise(r => setTimeout(r, 1000));
 
-    // 3. 5c (Endモーション)
     debugLog("Play 5c");
     animLiftEnd.setLoop(THREE.LoopOnce);
     animLiftEnd.clampWhenFinished = true;
@@ -410,10 +391,8 @@ async function stopLiftingSequence() {
     const duration = animLiftEnd.getClip().duration;
     await new Promise(r => setTimeout(r, duration * 1000));
 
-    // 4. 終了 -> Neutral
     await fadeTo(animNeutral, 0.5);
     
-    // リセット
     animLiftLoop.setLoop(THREE.LoopRepeat);
     isProcessing = false;
     isLiftingActive = false; 
@@ -452,12 +431,10 @@ function clearWaypoints() {
 // 移動プロセス
 async function processNextWaypoint() {
     if (waypointQueue.length === 0) {
-        // 全て到着 -> 停止
         isMoving = false;
         isProcessing = false;
         await fadeTo(animNeutral, 0.5);
         
-        // 向き直り
         const camPos = new THREE.Vector3();
         camera.getWorldPosition(camPos);
         await turnTowards(Math.atan2(camPos.x - model.position.x, camPos.z - model.position.z), true);
@@ -573,7 +550,6 @@ window.addEventListener('pointerdown', (e) => {
     // ★長押し判定開始 (リングコマンド)
     clearTimeout(pressTimer);
     pressTimer = setTimeout(() => {
-        // キャラクタークリック判定
         const rect = renderer.domElement.getBoundingClientRect();
         mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
         mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
@@ -583,13 +559,12 @@ window.addEventListener('pointerdown', (e) => {
         if (intersectsModel.length > 0) {
             openRingMenu(e.clientX, e.clientY);
         }
-    }, 500); // 0.5秒
+    }, 500); 
 });
 
 window.addEventListener('pointermove', (e) => { 
     if (new THREE.Vector2(e.clientX, e.clientY).distanceTo(pointerDownPos) > 10) {
         isDragging = true;
-        // ドラッグしたら長押しタイマーキャンセル（ただしメニューが開いていればドラッグ操作継続）
         if (!isRingMenuOpen) clearTimeout(pressTimer);
     }
     
